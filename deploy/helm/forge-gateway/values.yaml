@@ -36,8 +36,10 @@ env:
 # existing Secret so they never live in git.
 envFromSecret: ""
 
-# Lab-grade tenant config rendered into a Secret. For anything real,
-# point tenantsExistingSecret at a secret managed outside git.
+# Lab-grade tenant config rendered into a Secret — used only when
+# tenantsExistingSecret is empty. Production keys live in a Secret
+# created out-of-band (kubectl create secret ... from a git-ignored
+# file); git only carries the reference.
 tenants:
   - name: smart-city-agents
     api_key: forge-sc-CHANGE-ME
@@ -45,7 +47,7 @@ tenants:
   - name: demo
     api_key: forge-demo-CHANGE-ME
     daily_token_quota: 100000
-tenantsExistingSecret: ""
+tenantsExistingSecret: "forge-tenants-prod"
 
 resources:
   requests:
