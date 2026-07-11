@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 61.3.2
+    helm:
+      values: |
+        grafana:
+          adminPassword: forge-grafana-CHANGE-ME
+          sidecar:
+            dashboards:
+              enabled: true
+              label: grafana_dashboard
+        prometheus:
+          prometheusSpec:
+            # Pick up our ServiceMonitors and rules regardless of labels.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            retention: 3d
+            resources:
+              requests:
+                cpu: 100m
+                memory: 400Mi
+        alertmanager:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

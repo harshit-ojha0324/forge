@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mock-gemini
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/harshit-ojha0324/forge
+    targetRevision: main
+    path: deploy/helm/mock-llm
+    helm:
+      values: |
+        name: mock-gemini
+        model: gemini-2.0-flash
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: forge
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

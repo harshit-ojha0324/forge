@@ -1,0 +1,60 @@
+image:
+  # Set to your Artifact Registry path (terraform output `registry`).
+  repository: us-central1-docker.pkg.dev/PROJECT_ID/forge/gateway
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicas: 2
+
+service:
+  type: ClusterIP
+  port: 8080
+
+serviceAccount:
+  create: true
+  name: gateway
+  # Workload identity: set to the terraform output `gateway_service_account`
+  # to let pods call Google APIs (real Gemini fallback) without key files.
+  gcpServiceAccount: ""
+
+# Rendered into the pod as FORGE_* env. Values here are the GKE defaults;
+# docker-compose overrides the same knobs locally.
+env:
+  FORGE_REDIS_URL: redis://forge-redis:6379/0
+  FORGE_PRIMARY_BASE_URL: http://vllm:8000/v1
+  FORGE_PRIMARY_MODEL: qwen2.5-3b-instruct
+  FORGE_FALLBACK_BASE_URL: http://mock-gemini:8000/v1
+  FORGE_FALLBACK_MODEL: gemini-2.0-flash
+  FORGE_MAX_CONCURRENCY: "8"
+  FORGE_QUEUE_MAX_WAITING: "32"
+  FORGE_BREAKER_FAILURE_THRESHOLD: "3"
+  FORGE_BREAKER_COOLDOWN_S: "15"
+  FORGE_CONNECT_TIMEOUT_S: "1"
+  FORGE_TENANTS_FILE: /etc/forge/tenants.yaml
+
+# Secret values (e.g. FORGE_FALLBACK_API_KEY for real Gemini) come from an
+# existing Secret so they never live in git.
+envFromSecret: ""
+
+# Lab-grade tenant config rendered into a Secret. For anything real,
+# point tenantsExistingSecret at a secret managed outside git.
+tenants:
+  - name: smart-city-agents
+    api_key: forge-sc-CHANGE-ME
+    daily_token_quota: 500000
+  - name: demo
+    api_key: forge-demo-CHANGE-ME
+    daily_token_quota: 100000
+tenantsExistingSecret: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+serviceMonitor:
+  # Requires the kube-prometheus-stack CRDs (monitoring app).
+  enabled: true
+  interval: 15s

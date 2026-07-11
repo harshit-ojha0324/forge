@@ -1,0 +1,12 @@
+# Local development tenants only. In GKE this file comes from a Kubernetes
+# Secret rendered by Helm — never commit real keys.
+tenants:
+  - name: smart-city-agents
+    api_key: forge-sc-localdev-key
+    daily_token_quota: 500000
+  - name: demo
+    api_key: forge-demo-localdev-key
+    daily_token_quota: 100000
+  - name: loadtest
+    api_key: forge-loadtest-localdev-key
+    daily_token_quota: 5000000

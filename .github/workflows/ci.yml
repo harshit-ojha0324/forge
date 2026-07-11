@@ -1,0 +1,76 @@
+# The eval-gated pipeline:
+#   unit tests -> boot the full stack -> run evals (incl. failover drill)
+#   -> only then build & push images that ArgoCD will roll out.
+# A model or gateway regression that breaks an eval blocks the deploy.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install gateway deps
+        run: pip install -r services/gateway/requirements-dev.txt
+      - name: Unit tests
+        run: cd services/gateway && python -m pytest -q
+
+  evals:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Boot the platform
+        run: docker compose -f deploy/local/docker-compose.yml up -d --build
+      - name: Wait for gateway
+        run: timeout 90 bash -c 'until curl -sf http://localhost:8080/healthz; do sleep 2; done'
+      - name: Run eval gate (with failover drill)
+        run: |
+          pip install httpx pyyaml
+          python evals/run_evals.py --drill --json eval-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: eval-report.json
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f deploy/local/docker-compose.yml logs gateway --tail 100
+
+  publish:
+    # Gated on BOTH unit tests and the eval run. Set the GCP_PUBLISH
+    # repo variable to "true" and add the WI federation secrets once the
+    # GKE stage is live (docs/gcp-setup.md).
+    if: github.ref == 'refs/heads/main' && vars.GCP_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    needs: [test, evals]
+    permissions:
+      contents: read
+      id-token: write # keyless auth to GCP via workload identity federation
+    env:
+      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/forge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_CI_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev -q
+      - name: Build and push images
+        run: |
+          for svc in gateway mock-llm agent-demo; do
+            docker build -t "$REGISTRY/$svc:${GITHUB_SHA::7}" -t "$REGISTRY/$svc:latest" "services/$svc"
+            docker push --all-tags "$REGISTRY/$svc"
+          done

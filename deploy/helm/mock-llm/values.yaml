@@ -1,0 +1,10 @@
+image:
+  repository: us-central1-docker.pkg.dev/PROJECT_ID/forge/mock-llm
+  tag: latest
+
+# Install this chart twice with different names/values:
+#   mock-gemini (fallback stand-in) and, before the GPU stage, mock-vllm.
+name: mock-gemini
+model: gemini-2.0-flash
+ttftMs: "250"
+tokensPerSecond: "120"

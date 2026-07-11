@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mock-llm
+description: Mock OpenAI-compatible model server (fallback stand-in / GPU-free primary)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

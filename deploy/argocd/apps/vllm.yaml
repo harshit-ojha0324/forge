@@ -1,0 +1,20 @@
+# Deploy in stage 4 (GPU). Until then sync is manual so the pending pod
+# doesn't summon (and bill) a GPU node: sync it from the ArgoCD UI/CLI
+# when you want the GPU up, delete the app to scale back to zero.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vllm
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/harshit-ojha0324/forge
+    targetRevision: main
+    path: deploy/helm/vllm
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: forge
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

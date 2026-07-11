@@ -1,0 +1,47 @@
+# Platform eval set: 20 prompts spanning the smart-city agent's domains.
+# Platform checks (CI, works against mocks): every prompt must return 200
+# with non-empty content inside the latency SLO.
+# Quality checks (real models only): grounded-response heuristics.
+slo_latency_s: 5.0
+
+prompts:
+  - id: traffic-basic
+    prompt: "Is traffic heavy downtown right now?"
+  - id: traffic-compare
+    prompt: "Compare traffic between downtown and the harbor district."
+  - id: traffic-route
+    prompt: "Fastest route from the depot to city hall during rush hour?"
+  - id: bus-delay
+    prompt: "How late is bus route 42?"
+  - id: bus-reroute
+    prompt: "Route 7 is blocked — suggest a detour."
+  - id: air-quality
+    prompt: "What's the AQI near the river district?"
+  - id: air-advisory
+    prompt: "Should we issue an air quality advisory today?"
+  - id: sensors-health
+    prompt: "Which sensor clusters reported anomalies this week?"
+  - id: incident-summary
+    prompt: "Summarize the water main incident on 5th street for a press release."
+  - id: maintenance-draft
+    prompt: "Draft a maintenance notice for streetlight cluster 12."
+  - id: energy-peak
+    prompt: "When is peak electricity demand expected tomorrow?"
+  - id: parking
+    prompt: "Where is parking availability highest near the stadium?"
+  - id: event-planning
+    prompt: "What road closures are needed for the marathon on Sunday?"
+  - id: emergency-access
+    prompt: "Are emergency corridors clear in the old town?"
+  - id: bike-lanes
+    prompt: "Which bike lanes have the most traffic this month?"
+  - id: noise
+    prompt: "Any noise complaints correlated with the construction on Oak Ave?"
+  - id: flooding
+    prompt: "Which underpasses are at flood risk given tonight's forecast?"
+  - id: transit-load
+    prompt: "Is the metro over capacity on the green line?"
+  - id: waste-routes
+    prompt: "Optimize tomorrow's waste collection route for district 3."
+  - id: citizen-faq
+    prompt: "A citizen asks why their street is always congested at 5pm — explain."

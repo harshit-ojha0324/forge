@@ -1,0 +1,78 @@
+name: forge
+
+services:
+  redis:
+    image: redis:7-alpine
+
+  mock-vllm:
+    build: ../../services/mock-llm
+    environment:
+      MOCK_NAME: vllm
+      MOCK_MODEL: qwen2.5-3b-instruct
+      MOCK_TTFT_MS: "60"
+      MOCK_TOKENS_PER_SECOND: "80"
+    ports:
+      - "8001:8000"
+
+  mock-gemini:
+    build: ../../services/mock-llm
+    environment:
+      MOCK_NAME: gemini
+      MOCK_MODEL: gemini-2.0-flash
+      MOCK_TTFT_MS: "250"
+      MOCK_TOKENS_PER_SECOND: "120"
+    ports:
+      - "8002:8000"
+
+  gateway:
+    build: ../../services/gateway
+    depends_on:
+      - redis
+      - mock-vllm
+      - mock-gemini
+      - jaeger
+    environment:
+      FORGE_REDIS_URL: redis://redis:6379/0
+      FORGE_PRIMARY_BASE_URL: http://mock-vllm:8000/v1
+      FORGE_PRIMARY_MODEL: qwen2.5-3b-instruct
+      FORGE_FALLBACK_BASE_URL: http://mock-gemini:8000/v1
+      FORGE_FALLBACK_MODEL: gemini-2.0-flash
+      FORGE_MAX_CONCURRENCY: "8"
+      FORGE_QUEUE_MAX_WAITING: "32"
+      FORGE_QUEUE_WAIT_TIMEOUT_S: "10"
+      FORGE_BREAKER_FAILURE_THRESHOLD: "3"
+      FORGE_BREAKER_COOLDOWN_S: "10"
+      FORGE_CONNECT_TIMEOUT_S: "1"
+      FORGE_TENANTS_FILE: /etc/forge/tenants.yaml
+      FORGE_OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    volumes:
+      - ./tenants.yaml:/etc/forge/tenants.yaml:ro
+    ports:
+      - "8080:8080"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"

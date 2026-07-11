@@ -1,0 +1,17 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+terraform.tfvars
+.terraform.lock.hcl
+
+# local tooling & artifacts
+.tools/
+eval-report.json
+.DS_Store

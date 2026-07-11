@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vllm
+description: vLLM serving an open model on the spot T4 GPU pool
+type: application
+version: 0.1.0
+appVersion: "0.6.6"

@@ -1,0 +1,46 @@
+groups:
+  - name: forge-slo
+    rules:
+      # The headline SLO: less than 1% of requests may fail. Failover is
+      # invisible to clients, so this only fires when BOTH backends are
+      # unhealthy or the gateway itself is broken.
+      - alert: ForgeErrorRateSLOBreach
+        expr: |
+          sum(rate(forge_requests_total{outcome=~"all_backends_failed|stream_error|error"}[5m]))
+            /
+          sum(rate(forge_requests_total[5m])) > 0.01
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Forge error rate above the 1% SLO"
+          description: "Client-visible failures exceeded 1% of requests for 2 minutes. Failover has been exhausted — check both backends. Runbook: docs/runbook-gpu-node-loss.md"
+
+      - alert: ForgeLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(forge_request_duration_seconds_bucket[5m]))) > 5
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Forge p95 latency above 5s SLO"
+          description: "p95 end-to-end latency has been above 5s for 2 minutes. Check queue depth, GPU utilization, and whether traffic is on the fallback."
+
+      - alert: ForgeBreakerOpen
+        expr: forge_breaker_state == 2
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Primary (vLLM) circuit breaker is OPEN"
+          description: "All traffic is serving from the fallback backend. Clients are unaffected but cost and latency profiles changed. Investigate the vLLM pod / GPU node."
+
+      - alert: ForgeQueueSaturated
+        expr: forge_queue_waiting >= 24
+        for: 2m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Forge admission queue at 75%+ of capacity"
+          description: "Sustained queueing means demand exceeds concurrency. Load shedding (429s) begins when the queue is full — consider scaling gateway replicas or raising vLLM throughput."

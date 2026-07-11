@@ -1,0 +1,25 @@
+# App-of-apps: apply this ONE manifest by hand (the only kubectl apply in
+# the whole platform); ArgoCD then owns everything under deploy/argocd/apps,
+# and a git push becomes the only deploy mechanism.
+#
+#   kubectl apply -n argocd -f root-app.yaml
+#
+# Replace repoURL with your fork before applying.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: forge-root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/harshit-ojha0324/forge
+    targetRevision: main
+    path: deploy/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

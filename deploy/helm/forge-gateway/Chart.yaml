@@ -1,0 +1,6 @@
+apiVersion: v2
+name: forge-gateway
+description: Multi-tenant LLM inference gateway (quotas, queueing, caching, circuit-breaker failover)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
