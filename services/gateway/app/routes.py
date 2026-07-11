@@ -225,6 +225,15 @@ async def _handle_stream(state, tenant, payload, span, started) -> StreamingResp
                 if backend is state.primary:
                     await _record_primary_failure(state)
                 last_err = err
+            except UpstreamClientError:
+                # Upstream is alive; the 4xx is the caller's fault. Must be
+                # recorded as breaker success — a half-open probe that ends
+                # here would otherwise leave the breaker wedged in HALF_OPEN
+                # (probe never resolved) and permanently disable the primary.
+                if backend is state.primary:
+                    await state.breaker.record_success()
+                _sync_breaker_gauge(state)
+                raise
         if handle is None:
             _sync_breaker_gauge(state)
             raise AllBackendsFailed(str(last_err) if last_err else "no backend available")
@@ -282,7 +291,7 @@ async def _forward_stream(state, tenant, handle: StreamHandle, backend: Backend,
     finally:
         state.admission.release()
         if prompt_toks + completion_toks == 0 and completion_chars:
-            completion_toks = estimate_tokens("x" * completion_chars)
+            completion_toks = max(completion_chars // 4, 1)
             prompt_toks = 0
         metrics.TOKENS.labels(tenant.name, "prompt").inc(prompt_toks)
         metrics.TOKENS.labels(tenant.name, "completion").inc(completion_toks)

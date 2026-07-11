@@ -43,3 +43,8 @@ FAILOVERS = Counter(
     "Requests that fell over to another backend",
     ["from_backend", "to_backend"],
 )
+REDIS_ERRORS = Counter(
+    "forge_redis_errors_total",
+    "Redis failures absorbed by fail-open paths (quota/cache degraded, serving unaffected)",
+    ["op"],
+)

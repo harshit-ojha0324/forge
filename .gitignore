@@ -16,3 +16,5 @@ terraform.tfvars
 eval-report.json
 .DS_Store
 .secrets/
+tfplan
+*.tfplan

@@ -138,14 +138,16 @@ swapping models requires no client change.
 |---|---|
 | vLLM pod OOM/crash | connect errors → breaker opens after 3 → all traffic on Gemini → probe closes it after recovery. Zero client 5xx. |
 | Spot GPU node preempted | same as above, plus pod reschedules; pool may re-provision a node (minutes). Runbook: `docs/runbook-gpu-node-loss.md`. |
-| Redis down | quota checks/cache fail → requests error. Known single point of failure in v1; mitigation is fail-open on quota reads + Memorystore in production. |
+| Redis down | **fail open**: quota checks pass (unmetered), cache silently bypassed, `forge_redis_errors_total` counts every absorbed failure. Serving is unaffected; `/v1/usage` degrades. Fail-closed would only be right if quotas were hard billing guarantees. |
 | Gemini down while vLLM healthy | invisible (fallback unused). If vLLM *also* fails: 502s, `ForgeErrorRateSLOBreach` pages. |
 | Traffic spike 3x | queue absorbs the burst, then 429s with Retry-After; `ForgeQueueSaturated` warns; dashboards show shed rate for the scaling decision. |
 | Bad deploy of the gateway | eval gate blocks the image publish; if something ships anyway, ArgoCD rollback = git revert. |
 
 ## 11. Known limitations (v1)
 
-- Redis is single-node (lab-grade) — Memorystore or Redis Sentinel for real use.
+- Redis is single-node (lab-grade) — Memorystore or Redis Sentinel for
+  real use; its failure degrades metering/caching (fail-open) rather
+  than serving.
 - Breaker state is per-gateway-replica, not shared; replicas discover a
   dead primary independently (bounded by threshold × replicas extra failures).
 - No per-second rate limiting or fair queueing between tenants (see §5).

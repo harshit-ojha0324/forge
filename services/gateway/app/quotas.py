@@ -7,13 +7,24 @@ therefore overshoot the quota by up to `max_concurrency` requests —
 accepted and documented, because pre-reserving tokens for a response of
 unknown length would either reject work needlessly or need a
 reconciliation pass anyway.
+
+Redis failures FAIL OPEN: metering and quota enforcement are
+conveniences, not serving dependencies. A dead Redis means requests go
+unmetered for its downtime (visible via forge_redis_errors_total), not
+that clients see errors. The opposite trade (fail closed) is defensible
+only when quotas are hard billing guarantees.
 """
 import datetime as dt
+import logging
 
 import redis.asyncio as aioredis
+from redis.exceptions import RedisError
 
 from .config import Tenant
 from .errors import QuotaExceeded
+from .metrics import REDIS_ERRORS
+
+log = logging.getLogger("forge.quotas")
 
 USAGE_KEY_TTL_S = 3 * 24 * 3600  # keep a few days for the spend dashboard
 
@@ -29,7 +40,12 @@ class QuotaManager:
 
     async def check(self, tenant: Tenant) -> int:
         """Raise QuotaExceeded if the tenant is out of tokens; return remaining."""
-        used = int(await self._redis.get(_usage_key(tenant.name)) or 0)
+        try:
+            used = int(await self._redis.get(_usage_key(tenant.name)) or 0)
+        except (RedisError, OSError) as exc:
+            REDIS_ERRORS.labels(op="quota_check").inc()
+            log.warning("redis unavailable during quota check (%r); failing open", exc)
+            return tenant.daily_token_quota
         remaining = tenant.daily_token_quota - used
         if remaining <= 0:
             raise QuotaExceeded(
@@ -41,11 +57,16 @@ class QuotaManager:
     async def consume(self, tenant: Tenant, tokens: int) -> None:
         if tokens <= 0:
             return
-        key = _usage_key(tenant.name)
-        pipe = self._redis.pipeline()
-        pipe.incrby(key, tokens)
-        pipe.expire(key, USAGE_KEY_TTL_S)
-        await pipe.execute()
+        try:
+            key = _usage_key(tenant.name)
+            pipe = self._redis.pipeline()
+            pipe.incrby(key, tokens)
+            pipe.expire(key, USAGE_KEY_TTL_S)
+            await pipe.execute()
+        except (RedisError, OSError) as exc:
+            REDIS_ERRORS.labels(op="quota_consume").inc()
+            log.warning("redis unavailable recording usage (%r); dropped %d tokens",
+                        exc, tokens)
 
     async def usage(self, tenant: Tenant) -> dict:
         used = int(await self._redis.get(_usage_key(tenant.name)) or 0)

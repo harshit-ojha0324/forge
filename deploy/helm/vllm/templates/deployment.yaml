@@ -15,6 +15,10 @@ spec:
       labels:
         app.kubernetes.io/name: vllm
     spec:
+      # The Service is named "vllm", so Kubernetes injects the legacy
+      # service-link var VLLM_PORT=tcp://<ip>:8000 — which vLLM reads as
+      # its own config and crashes parsing. Disable the legacy injection.
+      enableServiceLinks: false
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       tolerations:

@@ -86,3 +86,13 @@ def test_only_deterministic_nonstreaming_is_cacheable():
     assert not is_cacheable({"temperature": 0.7})
     assert not is_cacheable({"temperature": 0, "stream": True})
     assert not is_cacheable({})  # temperature defaults to 1.0
+
+
+async def test_success_while_open_is_stale_evidence():
+    """A slow pre-trip request completing during OPEN must not slam the
+    breaker shut — recovery goes through the half-open probe."""
+    breaker = CircuitBreaker(failure_threshold=1, cooldown_s=10)
+    await breaker.record_failure()
+    assert breaker.state == BreakerState.OPEN
+    await breaker.record_success()  # straggler from before the outage
+    assert breaker.state == BreakerState.OPEN

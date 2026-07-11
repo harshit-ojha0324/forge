@@ -12,8 +12,14 @@ deliberately key/value.
 """
 import hashlib
 import json
+import logging
 
 import redis.asyncio as aioredis
+from redis.exceptions import RedisError
+
+from .metrics import REDIS_ERRORS
+
+log = logging.getLogger("forge.cache")
 
 CACHEABLE_KEYS = ("model", "messages", "temperature", "top_p", "max_tokens", "n", "stop")
 
@@ -39,13 +45,24 @@ class ResponseCache:
     async def get(self, payload: dict) -> dict | None:
         if not (self.enabled and is_cacheable(payload)):
             return None
-        raw = await self._redis.get(cache_key(payload))
+        try:
+            raw = await self._redis.get(cache_key(payload))
+        except (RedisError, OSError) as exc:
+            # A dead cache is a slow day, not an outage: fail open.
+            REDIS_ERRORS.labels(op="cache_get").inc()
+            log.warning("redis unavailable during cache get (%r)", exc)
+            return None
         return json.loads(raw) if raw else None
 
     async def put(self, payload: dict, response: dict) -> bool:
         if not (self.enabled and is_cacheable(payload)):
             return False
-        await self._redis.set(
-            cache_key(payload), json.dumps(response), ex=self._ttl_s
-        )
+        try:
+            await self._redis.set(
+                cache_key(payload), json.dumps(response), ex=self._ttl_s
+            )
+        except (RedisError, OSError) as exc:
+            REDIS_ERRORS.labels(op="cache_put").inc()
+            log.warning("redis unavailable during cache put (%r)", exc)
+            return False
         return True

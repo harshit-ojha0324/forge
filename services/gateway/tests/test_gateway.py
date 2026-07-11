@@ -207,3 +207,76 @@ async def test_metrics_endpoint_exposes_forge_metrics(client):
     r = await client.get("/metrics")
     assert r.status_code == 200
     assert "forge_requests_total" in r.text
+
+
+@respx.mock
+async def test_streaming_4xx_passes_through_without_failover(client):
+    fallback = respx.post(FALLBACK).respond(json=completion_body())
+    respx.post(PRIMARY).respond(
+        status_code=400, json={"error": {"message": "bad stream request", "type": "bad_request"}}
+    )
+    r = await client.post(
+        "/v1/chat/completions", json=chat_request(stream=True), headers=AUTH
+    )
+    assert r.status_code == 400
+    assert fallback.call_count == 0
+
+
+@respx.mock
+async def test_streaming_4xx_probe_does_not_wedge_half_open_breaker(client):
+    """Regression: a HALF_OPEN probe that is a streaming request answered
+    with 4xx must resolve the probe (upstream is alive), not leave the
+    breaker wedged with the primary permanently disabled."""
+    primary = respx.post(PRIMARY).respond(status_code=500)
+    respx.post(FALLBACK).respond(json=completion_body())
+    for _ in range(2):  # trip the breaker (threshold 2)
+        await client.post("/v1/chat/completions", json=chat_request(), headers=AUTH)
+
+    await asyncio.sleep(0.25)  # cooldown -> next request becomes the probe
+    primary.respond(
+        status_code=400, json={"error": {"message": "ctx too long", "type": "bad_request"}}
+    )
+    r = await client.post(
+        "/v1/chat/completions", json=chat_request(stream=True), headers=AUTH
+    )
+    assert r.status_code == 400  # the probe's 4xx reaches the client
+
+    # breaker must be CLOSED now (4xx proves the upstream is alive):
+    # a recovered primary serves the very next request.
+    primary.respond(json=completion_body(content="primary recovered"))
+    r = await client.post("/v1/chat/completions", json=chat_request(), headers=AUTH)
+    assert r.headers["x-forge-backend"] == "vllm"
+
+
+class _ExplodingRedis:
+    """Every operation raises like a dead Redis connection."""
+
+    def __getattr__(self, name):
+        import redis.exceptions
+
+        def sync_boom(*args, **kwargs):
+            raise redis.exceptions.ConnectionError("redis down")
+
+        async def boom(*args, **kwargs):
+            raise redis.exceptions.ConnectionError("redis down")
+
+        if name == "pipeline":
+            return sync_boom
+        return boom
+
+
+@respx.mock
+async def test_redis_outage_fails_open(client):
+    """Regression: quotas and cache are conveniences — a dead Redis must
+    degrade metering, not turn every request into a 500."""
+    respx.post(PRIMARY).respond(json=completion_body())
+    state = client.forge_app.state
+    exploding = _ExplodingRedis()
+    state.quotas._redis = exploding
+    state.cache._redis = exploding
+
+    r = await client.post(
+        "/v1/chat/completions", json=chat_request(temperature=0), headers=AUTH
+    )
+    assert r.status_code == 200
+    assert r.headers["x-forge-backend"] == "vllm"

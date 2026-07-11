@@ -56,6 +56,11 @@ class CircuitBreaker:
 
     async def record_success(self) -> None:
         async with self._lock:
+            if self._state == BreakerState.OPEN:
+                # Stale evidence: a slow request admitted before the trip
+                # can complete after it. Recovery goes through the
+                # half-open probe, not through pre-outage survivors.
+                return
             self._consecutive_failures = 0
             self._probe_in_flight = False
             self._state = BreakerState.CLOSED

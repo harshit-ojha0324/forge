@@ -24,7 +24,8 @@ to the Gemini backend (yellow area), and the client-visible error rate
 stays pinned at 0.00%. When the primary comes back, a single half-open
 probe closes the breaker and traffic returns home (blue).*
 
-The receipts from that exact run:
+Numbers from that run (local stack, mock model backends — the same
+gateway code that runs on GKE; a real-GPU preemption drill is stage 6):
 
 | Metric | Value |
 |---|---|
@@ -99,6 +100,10 @@ GPU batch capacity is the scarce resource worth protecting.
 - **Quota checks at admission, charges after the response** — pre-reserving
   tokens for an unknown-length response rejects legitimate work; the
   bounded overshoot is documented instead.
+- **Redis fails open.** Quotas and the cache are conveniences, not
+  serving dependencies: if Redis dies, requests still serve (unmetered,
+  uncached) and `forge_redis_errors_total` alerts operators — instead of
+  a metering store outage becoming a client-facing one.
 - **Spot GPU everywhere it's safe.** The breaker is precisely what makes
   a 30-second-notice spot T4 acceptable as the primary backend. Deleting
   the vLLM app scales the GPU pool — and its bill — to zero.

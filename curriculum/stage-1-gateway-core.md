@@ -133,12 +133,16 @@ keeps the offered load at a level the GPU can batch efficiently and
 turns the excess into fast, honest 429s.
 
 Q10. Quota is stored in Redis. Redis dies — what does Forge do, and
-what SHOULD a production system do?
-**A:** v1: quota check throws → requests error (Redis is a SPOF —
-documented). Production: fail open on quota reads (serve, log, alert —
-availability over perfect metering for bounded time) with Memorystore/
-Sentinel for real HA. Fail-closed is defensible for hard billing;
-either way, state the choice.
+when would you choose the opposite?
+**A:** Fail open: quota checks pass (unmetered), cache is bypassed,
+`forge_redis_errors_total` counts every absorbed failure so operators
+get paged instead of clients getting 500s. Metering is a convenience,
+not a serving dependency. The opposite (fail closed) is right only when
+quotas are hard billing/contractual guarantees — then serving unmetered
+is the incident. Either way the point is: it's a deliberate choice, and
+the code and docs state it. (History note: v1.0 shipped fail-closed by
+accident — an external review caught it; the fix + regression test is
+in git history.)
 
 ## Interview drill topics
 "Walk me through a request when the GPU node just died." /
