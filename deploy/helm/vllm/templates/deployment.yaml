@@ -7,6 +7,12 @@ metadata:
     app.kubernetes.io/part-of: forge
 spec:
   replicas: {{ .Values.replicas }}
+  # With a single GPU in the cluster, a rolling update deadlocks: the new
+  # pod waits for a GPU the old pod won't release until the new one is
+  # ready. Recreate kills the old pod first (brief primary outage — which
+  # the gateway's failover absorbs by design).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: vllm

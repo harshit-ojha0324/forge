@@ -135,6 +135,25 @@ Every check served `via gemini` with `forge_breaker_state 2.0` (OPEN) —
 the primary backend *didn't exist on the cluster yet*, and no client ever
 saw an error. The failover architecture validated itself on day one.
 
+### The drill, repeated for real
+
+The demo above uses mock backends; this one didn't. Same gateway on GKE,
+primary = actual vLLM serving Qwen2.5-3B on the spot T4, killed mid-load
+with `kubectl delete pod --grace-period=0 --force` — in-flight batched
+requests and all:
+
+| Metric | Value |
+|---|---|
+| Requests completed | 892 |
+| Served by vLLM before the kill | 96 |
+| Served by Gemini after in-request failover | 796 |
+| Client-visible failures (5xx) | **0** |
+| p50 / p95 latency | 664 ms / 2.4 s |
+
+Recovery is hands-off: the pod reschedules, re-downloads the model,
+passes readiness, and the breaker's half-open probe brings traffic home
+(~5–10 min; see the [runbook](docs/runbook-gpu-node-loss.md)).
+
 ### CI: evals gate the deploy
 
 [The pipeline](.github/workflows/ci.yml) runs unit tests → boots the full

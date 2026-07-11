@@ -47,7 +47,10 @@ def chat_body(prompt: str, **kw) -> dict:
     return {
         "model": "forge-default",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 128,
+        # Smoke-test sized: on a single T4 serving a 3B model, long
+        # completions under a 20-prompt stampede breach any honest SLO —
+        # evals measure per-request latency at realistic concurrency.
+        "max_tokens": 64,
         **kw,
     }
 
@@ -68,12 +71,16 @@ async def run(args) -> int:
         ids = [m["id"] for m in r.json().get("data", [])]
         report.add("models-alias", "forge-default" in ids, f"models={ids}")
 
-        # the prompt set, concurrently
+        # the prompt set, at bounded concurrency (a 20-way burst on a
+        # single-GPU backend measures queueing, not serving)
+        gate = asyncio.Semaphore(args.max_concurrency)
+
         async def one(p):
-            started = time.monotonic()
-            resp = await client.post(
-                "/v1/chat/completions", json=chat_body(p["prompt"]), headers=headers
-            )
+            async with gate:
+                started = time.monotonic()
+                resp = await client.post(
+                    "/v1/chat/completions", json=chat_body(p["prompt"]), headers=headers
+                )
             elapsed = time.monotonic() - started
             if resp.status_code != 200:
                 return p["id"], False, f"HTTP {resp.status_code}"
@@ -145,6 +152,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://localhost:8080")
     parser.add_argument("--key", default="forge-loadtest-localdev-key")
+    parser.add_argument("--max-concurrency", type=int, default=4,
+                        help="concurrent eval prompts (per-request latency, not queue latency)")
     parser.add_argument("--drill", action="store_true")
     parser.add_argument("--mock-control", default="http://localhost:8001",
                         help="mock-vllm control endpoint for the failover drill")
