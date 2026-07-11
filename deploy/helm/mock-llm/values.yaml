@@ -1,6 +1,6 @@
 image:
-  repository: us-central1-docker.pkg.dev/PROJECT_ID/forge/mock-llm
-  tag: latest
+  repository: us-central1-docker.pkg.dev/forge-harshit-26/forge/mock-llm
+  tag: v1
 
 # Install this chart twice with different names/values:
 #   mock-gemini (fallback stand-in) and, before the GPU stage, mock-vllm.

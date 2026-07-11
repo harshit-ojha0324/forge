@@ -30,4 +30,8 @@ resource "google_service_account_iam_member" "gateway_workload_identity" {
   service_account_id = google_service_account.gateway.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[forge/gateway]"
+
+  # The project's workload-identity pool only exists once a WI-enabled
+  # cluster does — binding to it before then 400s.
+  depends_on = [google_container_cluster.forge]
 }
