@@ -1,0 +1,15 @@
+{{- if .Values.serviceMonitor.enabled }}
+# kube-prometheus-stack's Grafana sidecar watches for ConfigMaps with the
+# grafana_dashboard label and auto-imports them — the dashboard ships with
+# the service that owns its metrics.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forge-gateway-dashboard
+  labels:
+    {{- include "forge-gateway.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  forge-overview.json: |-
+{{ .Files.Get "dashboards/forge-overview.json" | indent 4 }}
+{{- end }}
