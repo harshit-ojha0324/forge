@@ -144,6 +144,21 @@ the code and docs state it. (History note: v1.0 shipped fail-closed by
 accident — an external review caught it; the fix + regression test is
 in git history.)
 
+★ Q11 (war story — this bug shipped in v1.0 and an external review
+caught it). The breaker could permanently disable the primary in one
+narrow case. Reconstruct it from the state machine.
+**A:** HALF_OPEN admits exactly one probe (`_probe_in_flight = True`).
+If that probe is a *streaming* request and the primary answers 4xx,
+`start_stream` raises `UpstreamClientError` — which the streaming
+path didn't catch (the unary path did). The probe never resolved:
+`_probe_in_flight` stayed True, every later `allow_primary()` returned
+False, primary dead until pod restart. Fix: treat upstream 4xx as
+breaker success (server is alive) on BOTH paths. Lesson: a token that
+must be returned ("exactly one probe") has to be resolved on *every*
+exit path, and error taxonomy must be uniform across unary/stream —
+the interaction matrix (state × path × error class) is where the
+missing test always lives.
+
 ## Interview drill topics
 "Walk me through a request when the GPU node just died." /
 "Why not put the queue in front of auth?" / "Design per-second fair

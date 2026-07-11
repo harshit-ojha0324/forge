@@ -41,9 +41,13 @@ run `make evals` against the cluster — real model, same gate.
 ### Lab 6.2 — The real failover demo (do-together ★)
 Load against the cluster gateway; `kubectl -n forge delete pod -l
 app.kubernetes.io/name=vllm` mid-run. Same zero-5xx result as local,
-now with a real GPU workload. Record terminal + Grafana — this is the
-money footage for the video. THEN: delete the vllm app, watch the node
-drain away, confirm billing stops. Teardown is part of the lab.
+now with a real GPU workload. Gold-standard variant: `gcloud compute
+instances simulate-maintenance-event <gpu-node> --zone <zone>` — on a
+Spot VM that triggers a REAL preemption, exercising the autoscaler
+reprovisioning path end to end, not just pod rescheduling. Record
+terminal + Grafana — this is the money footage for the video. THEN:
+delete the vllm app, watch the node drain away, confirm billing stops.
+Teardown is part of the lab.
 
 ### Lab 6.3 — Agent under the microscope (solo ★)
 Run `agent.py --loop` as the smart-city tenant. In Grafana, find the
@@ -131,6 +135,46 @@ adding a backend label to the token counter (or a recording rule
 joining the two) gives spend-by-tenant-by-backend — self-hosted
 amortized $/token vs API list price. That's the FinOps answer
 customers actually want.
+
+## War stories from the real deployment (all of these actually happened)
+
+These three incidents occurred during Forge's first GPU deployment.
+Each is a teach-back: reconstruct the diagnosis before reading the
+answer, then find the fix in git history.
+
+★ W1. vLLM ran perfectly in docker-compose but crash-looped on GKE
+with `invalid literal for int() with base 10: 'tcp://10.30.15.15:8000'`.
+Diagnose from that one line.
+**A:** Kubernetes injects legacy service-link env vars for every
+Service in the namespace: a Service named `vllm` produces
+`VLLM_PORT=tcp://<clusterIP>:8000`. vLLM treats `VLLM_PORT` as its own
+config variable and int()-parses it. Fix: `enableServiceLinks: false`
+on the pod (or rename the Service). Lesson: the platform injects env
+into your process — apps with env-var config namespaces can collide
+with Service names, and it will never reproduce outside Kubernetes.
+
+★ W2. A fixed image was pushed; 45 minutes later the old pod was still
+CrashLoopBackOff and the new pod still Pending. No errors anywhere.
+Why can this never resolve itself?
+**A:** Single-GPU rolling-update deadlock: default RollingUpdate wants
+the new pod Ready before killing the old one; the new pod needs the
+only GPU, which the old pod holds; the autoscaler can't add a second
+GPU node (pool max / quota = 1). Fix: `strategy: Recreate` for
+singleton-resource workloads — kill old first and let the gateway's
+failover absorb the gap. Lesson: rolling updates silently assume surge
+capacity exists; for exclusive resources that assumption is false.
+
+★ W3. The eval gate had passed for days against mocks. The first run
+against the real GPU failed 12/24 checks on latency. Was the gate
+wrong, the model slow, or the SLO bad?
+**A:** None cleanly — the *harness load profile* was wrong. It fired
+all 20 prompts simultaneously at 128 tokens against 8 concurrency
+slots: the tail measured queue wait, not serving latency, against an
+SLO calibrated on instant mocks. Fix: bound eval concurrency (4) and
+right-size max_tokens (64) so the gate measures per-request latency at
+realistic load. Lesson: an SLO is meaningless without its load
+profile; evals must encode both. (Also note what this proves: the gate
+*did its job* — it refused to bless a behavior change.)
 
 ## Final boss: the mock interview (90 min)
 

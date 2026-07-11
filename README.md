@@ -135,24 +135,42 @@ Every check served `via gemini` with `forge_breaker_state 2.0` (OPEN) —
 the primary backend *didn't exist on the cluster yet*, and no client ever
 saw an error. The failover architecture validated itself on day one.
 
-### The drill, repeated for real
+### The drill, repeated for real — up to a genuine spot preemption
 
-The demo above uses mock backends; this one didn't. Same gateway on GKE,
-primary = actual vLLM serving Qwen2.5-3B on the spot T4, killed mid-load
-with `kubectl delete pod --grace-period=0 --force` — in-flight batched
-requests and all:
+The demo above uses mock backends; these didn't. Same gateway on GKE,
+primary = actual vLLM serving Qwen2.5-3B on the spot T4. Two escalating
+drills:
+
+**Drill 1 — pod kill.** `kubectl delete pod --grace-period=0 --force`
+mid-load, in-flight batched requests and all: 892 requests, 96 via vLLM
+before the kill, 796 via Gemini after in-request failover, **0 × 5xx**,
+p95 2.4 s.
+
+**Drill 2 — real preemption.** `gcloud compute instances
+simulate-maintenance-event` on the spot node — on Spot VMs this triggers
+an actual GCP preemption, so this exercises the whole reclaim path: node
+dies, pods evicted, autoscaler provisions a *fresh* T4, driver install,
+image pull, model download. Load generator ran **inside the cluster**
+(pod-to-service networking, no tunnel in the measurement path):
 
 | Metric | Value |
 |---|---|
-| Requests completed | 892 |
-| Served by vLLM before the kill | 96 |
-| Served by Gemini after in-request failover | 796 |
+| Requests completed | 1,032 |
+| Served by vLLM until the node was reclaimed | 264 |
+| Served by Gemini after in-request failover | 768 |
 | Client-visible failures (5xx) | **0** |
-| p50 / p95 latency | 664 ms / 2.4 s |
+| p50 / p95 latency | 597 ms / 2.4 s |
 
-Recovery is hands-off: the pod reschedules, re-downloads the model,
-passes readiness, and the breaker's half-open probe brings traffic home
-(~5–10 min; see the [runbook](docs/runbook-gpu-node-loss.md)).
+The cluster's own Prometheus telling the story — three failover events
+(the kill + two preemptions), and the client-visible error rate flat at
+zero throughout:
+
+![Cluster Prometheus during the drills](docs/assets/preemption-prometheus.png)
+
+Recovery is hands-off both times: pod reschedules (or a fresh node
+provisions), the model reloads, readiness passes, and the breaker's
+half-open probe brings traffic home (~5–10 min pod-level, ~10–15 min
+node-level; see the [runbook](docs/runbook-gpu-node-loss.md)).
 
 ### CI: evals gate the deploy
 
@@ -172,6 +190,31 @@ queue-saturation warn), and OpenTelemetry traces into Jaeger.
 | Breaker OPEN, fallback serving, 0.00% errors | Recovered — the full arc in one chart |
 |---|---|
 | ![Breaker open](docs/assets/dashboard-breaker-open.png) | ![Recovered](docs/assets/dashboard-recovered.png) |
+
+## Hardening history (all of it real)
+
+This platform has been externally code-reviewed and battle-tested; the
+fixes are in git history with regression tests, and each one is teaching
+material in [`curriculum/`](curriculum/):
+
+- **Breaker HALF_OPEN wedge** (external review): a half-open probe that
+  was a *streaming* request answered with 4xx never resolved the probe —
+  primary permanently disabled. Fixed on both paths + regression test.
+- **Redis fail-open**: v1.0 shipped with Redis as an accidental hard
+  dependency; a dead metering store became a client-facing outage. Now
+  quotas/cache degrade gracefully with `forge_redis_errors_total`.
+- **`VLLM_PORT` service-link collision**: Kubernetes injects
+  `VLLM_PORT=tcp://…` for a Service named `vllm`; vLLM parses it as
+  config and crashes. `enableServiceLinks: false`.
+- **Single-GPU rolling-update deadlock**: the new pod waits for a GPU
+  the old pod won't release until the new one is ready. `strategy:
+  Recreate` — failover absorbs the gap.
+- **Eval load-profile recalibration**: the deploy gate correctly blocked
+  when real-GPU latency breached an SLO calibrated on mocks — the
+  harness was measuring 20-way queue latency, not serving latency. Evals
+  now encode concurrency as part of the SLO.
+- **Secrets hygiene**: tenant keys rotated to an out-of-band Secret
+  (git carries only the reference); a committed `tfplan` purged.
 
 ## Repo map
 
