@@ -15,6 +15,9 @@ class Tenant(BaseModel):
     name: str
     api_key: str
     daily_token_quota: int
+    # Fair-queueing share under contention: weight 2 gets ~2x the slots
+    # of weight 1 while both are queued. Slots, not tokens (see admission.py).
+    weight: int = 1
 
 
 class Settings(BaseSettings):

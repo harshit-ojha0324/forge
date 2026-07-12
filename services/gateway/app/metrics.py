@@ -27,7 +27,11 @@ TOKENS = Counter(
     "Tokens processed per tenant",
     ["tenant", "direction"],  # direction: prompt | completion
 )
-QUEUE_WAITING = Gauge("forge_queue_waiting", "Requests waiting for a capacity slot")
+QUEUE_WAITING = Gauge(
+    "forge_queue_waiting",
+    "Requests waiting for a capacity slot, per tenant (fair-queueing view)",
+    ["tenant"],
+)
 IN_FLIGHT = Gauge("forge_inflight_requests", "Requests currently executing upstream")
 CACHE_EVENTS = Counter(
     "forge_cache_events_total", "Response cache activity", ["result"]  # hit|miss|store

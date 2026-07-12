@@ -36,11 +36,11 @@ groups:
           summary: "Primary (vLLM) circuit breaker is OPEN"
           description: "All traffic is serving from the fallback backend. Clients are unaffected but cost and latency profiles changed. Investigate the vLLM pod / GPU node."
 
-      - alert: ForgeQueueSaturated
-        expr: forge_queue_waiting >= 24
+      - alert: ForgeTenantQueueSaturated
+        expr: max by (tenant) (forge_queue_waiting) >= 24
         for: 2m
         labels:
           severity: warn
         annotations:
-          summary: "Forge admission queue at 75%+ of capacity"
-          description: "Sustained queueing means demand exceeds concurrency. Load shedding (429s) begins when the queue is full — consider scaling gateway replicas or raising vLLM throughput."
+          summary: "Tenant {{ $labels.tenant }} admission queue at 75%+ of its cap"
+          description: "One tenant is sustaining a deep queue. Fair queueing keeps others isolated, but this tenant is about to shed 429s — check whether it's runaway automation or genuine demand needing a quota/weight change."

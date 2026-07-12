@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from . import metrics
 from .admission import AdmissionController
 from .backends import Backend
 from .breaker import CircuitBreaker
@@ -59,13 +58,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.tracer = setup_tracing(
             settings.otel_service_name, settings.otel_exporter_otlp_endpoint
         )
-        metrics.QUEUE_WAITING.set_function(lambda: app.state.admission.waiting)
-        metrics.IN_FLIGHT.set_function(lambda: app.state.admission.in_flight)
+        # queue/in-flight gauges are maintained by AdmissionController
         yield
         await app.state.http.aclose()
         await app.state.redis.aclose()
 
-    app = FastAPI(title="Forge Gateway", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="Forge Gateway", version="1.2.0", lifespan=lifespan)
     app.include_router(router)
 
     @app.get("/metrics")

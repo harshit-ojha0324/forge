@@ -44,15 +44,16 @@ Console → IAM & Admin → Quotas → filter:
 Justification text that works: "Learning project: single spot T4 for
 self-hosted LLM inference on GKE, scaled to zero when idle."
 
-## 5. Terraform state bucket (optional but recommended)
+## 5. Terraform state bucket ✅ (configured: `forge-harshit-26-tfstate`)
 
 ```bash
-gsutil mb -l us-central1 gs://forge-platform-<yourname>-tfstate
-gsutil versioning set on gs://forge-platform-<yourname>-tfstate
+gsutil mb -l us-central1 gs://<project-id>-tfstate
+gsutil versioning set on gs://<project-id>-tfstate
 ```
 
-Then uncomment the `backend "gcs"` block in `infra/terraform/versions.tf`
-with this bucket name.
+Set the bucket in the `backend "gcs"` block in
+`infra/terraform/versions.tf`, then `terraform init -migrate-state`.
+Forks: change the bucket name to your own before init.
 
 ## 6. Provision
 
@@ -99,14 +100,35 @@ kubectl -n argocd get applications
 From here on: change YAML → git push → ArgoCD syncs. That's the deploy
 pipeline.
 
-## 9. CI publishing (optional, stage 5)
+## 9. CI publishing via WIF ✅ (configured)
 
-The GitHub Actions `publish` job uses keyless auth (workload identity
-federation). Set up a WIF pool + provider bound to your repo, create a
-`forge-ci` service account with `roles/artifactregistry.writer`, then set
-repo variables `GCP_PUBLISH=true`, `GCP_PROJECT_ID`, `GCP_REGION` and
-secrets `GCP_WIF_PROVIDER`, `GCP_CI_SERVICE_ACCOUNT`. Google's
-`google-github-actions/auth` README has the four commands.
+The GitHub Actions `publish` job authenticates keylessly — no service
+account keys exist anywhere. The exact setup used:
+
+```bash
+gcloud iam workload-identity-pools create github --location=global
+gcloud iam workload-identity-pools providers create-oidc github-oidc \
+  --location=global --workload-identity-pool=github \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='<owner>/<repo>'"
+gcloud iam service-accounts create forge-ci
+gcloud projects add-iam-policy-binding <project> \
+  --member=serviceAccount:forge-ci@<project>.iam.gserviceaccount.com \
+  --role=roles/artifactregistry.writer
+gcloud iam service-accounts add-iam-policy-binding forge-ci@<project>.iam.gserviceaccount.com \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/github/attribute.repository/<owner>/<repo>"
+
+gh variable set GCP_PUBLISH -b true
+gh variable set GCP_PROJECT_ID -b <project>
+gh variable set GCP_REGION -b us-central1
+gh secret set GCP_WIF_PROVIDER -b "projects/<project-number>/locations/global/workloadIdentityPools/github/providers/github-oidc"
+gh secret set GCP_CI_SERVICE_ACCOUNT -b forge-ci@<project>.iam.gserviceaccount.com
+```
+
+The attribute condition pins the provider to this exact repo — no other
+repository can mint tokens against the pool.
 
 ## 10. Teardown (end of every session)
 

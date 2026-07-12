@@ -8,11 +8,12 @@ terraform {
     }
   }
 
-  # Remote state: uncomment after creating the bucket (docs/gcp-setup.md).
-  # backend "gcs" {
-  #   bucket = "<project-id>-forge-tfstate"
-  #   prefix = "forge"
-  # }
+  # Remote state: versioned GCS bucket (docs/gcp-setup.md §5). State
+  # contains resource attributes — the bucket is private to the project.
+  backend "gcs" {
+    bucket = "forge-harshit-26-tfstate"
+    prefix = "forge"
+  }
 }
 
 provider "google" {

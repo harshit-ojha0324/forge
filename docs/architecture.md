@@ -60,17 +60,32 @@ replaying on the fallback would emit duplicate/partial output. This
 boundary is measured: `forge_ttft_seconds` tells you how large that
 window is in practice.
 
-## 4. Admission control
+## 4. Admission control & per-tenant fairness
 
-Two numbers: `max_concurrency` (slots running against backends) and
-`queue_max_waiting` (bounded waiting room). Beyond both, requests are
-shed immediately with 429 + `Retry-After`. A waiter that can't get a slot
-within `queue_wait_timeout_s` gets 503.
+`max_concurrency` bounds slots running against backends globally (the
+GPU's batch capacity is the resource being protected). Waiting happens
+in **per-tenant bounded queues** (`queue_max_waiting` each): a tenant
+that floods fills and sheds *its own* queue with 429 + `Retry-After`,
+while other tenants' queues are untouched. A waiter that can't get a
+slot within `queue_wait_timeout_s` gets 503.
+
+Freed slots are granted across waiting tenants by **smooth weighted
+round-robin** (the nginx algorithm): a `weight: 2` tenant gets ~2× the
+slots of a weight-1 tenant under contention, interleaved (a,b,a — not
+bursts), deterministic, O(active tenants) per grant. Measured effect:
+a 40-worker flooder self-inflicts p50 3.4s while a 2-worker tenant
+alongside it holds p50 ~0.8s, both at zero errors.
 
 Shedding early is deliberate: queueing beyond capacity increases latency
 for everyone and throughput for no one. The queue exists to absorb
 sub-second bursts, not to hide sustained overload — sustained overload
-should be visible (429s, `forge_shed_total`) so capacity decisions get made.
+is visible per tenant (`forge_queue_waiting{tenant}`, 429 outcomes) so
+capacity/weight decisions get made.
+
+Honest scope: fairness shares *slots*, not token cost — a tenant sending
+4k-token prompts holds its slots longer. Cost-aware scheduling (deficit
+accounting on estimated tokens) is the designed-for next step; the grant
+loop is the insertion point.
 
 ## 5. Multi-tenancy
 
@@ -82,10 +97,10 @@ should be visible (429s, `forge_shed_total`) so capacity decisions get made.
   lengths) rejects legitimate work.
 - **Metering**: `forge_tokens_total{tenant,direction}` powers the
   per-tenant spend dashboard; `/v1/usage` lets tenants self-serve.
-- **Isolation limits (honest)**: quotas bound spend per day, not fairness
-  per second. A burst-heavy tenant can monopolize the queue window.
-  Per-tenant rate limits/weighted fair queueing are the designed-for next
-  step (the admission controller is the insertion point).
+- **Isolation**: per-tenant bounded queues + weighted fair slot grants
+  (§4) bound the noisy-neighbor blast radius; quotas bound daily spend.
+  Remaining limits (honest): fairness is slot-based not token-cost-based,
+  and there is no per-second rate limiter distinct from quotas.
 
 ## 6. Caching
 
@@ -150,6 +165,7 @@ swapping models requires no client change.
   than serving.
 - Breaker state is per-gateway-replica, not shared; replicas discover a
   dead primary independently (bounded by threshold × replicas extra failures).
-- No per-second rate limiting or fair queueing between tenants (see §5).
+- Fair queueing shares slots, not token cost (§4); no per-second rate
+  limiter distinct from daily quotas.
 - Exact-match cache only; semantic cache is a drop-in upgrade point.
 - Single region, single GPU node — no cross-zone HA for the primary model.

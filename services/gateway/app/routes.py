@@ -145,7 +145,7 @@ async def chat_completions(request: Request):
         try:
             if payload.get("stream"):
                 return await _handle_stream(state, tenant, payload, span, started)
-            async with state.admission.slot():
+            async with state.admission.slot(tenant.name, tenant.weight):
                 return await _handle_unary(state, tenant, payload, span, started)
         except (QueueFull, QueueWaitTimeout) as err:
             metrics.SHED.labels(reason=err.error_type).inc()
@@ -211,7 +211,7 @@ async def _handle_unary(state, tenant, payload, span, started) -> JSONResponse:
 
 
 async def _handle_stream(state, tenant, payload, span, started) -> StreamingResponse:
-    await state.admission.acquire()
+    await state.admission.acquire(tenant.name, tenant.weight)
     handle: StreamHandle | None = None
     backend_used: Backend | None = None
     try:

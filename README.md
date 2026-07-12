@@ -8,11 +8,13 @@
 
 An inference gateway + agent runtime on Kubernetes: one OpenAI-compatible
 endpoint in front of self-hosted **vLLM** (spot GPU, scale-to-zero) with
-**circuit-breaker failover to Gemini**, per-tenant API keys and token
-quotas, admission control with load shedding, a Redis response cache, and
-full observability. Provisioned by **Terraform**, deployed by **ArgoCD** —
-a git push is the only deploy mechanism — and gated in CI by an **eval
-suite that includes a live failover drill**.
+**circuit-breaker failover to Gemini**, per-tenant API keys, token quotas,
+**weighted fair queueing with per-tenant load shedding**, a Redis response
+cache, and full observability. Provisioned by **Terraform** (remote state
+in GCS), deployed by **ArgoCD** — a git push is the only deploy
+mechanism — with **keyless CI** (workload identity federation, no
+credentials anywhere) gated by an **eval suite that includes live
+failover and tenant-isolation drills**.
 
 ## The demo: kill the primary model server under load
 
@@ -74,7 +76,8 @@ flowchart LR
 ```
 
 The request path is ordered deliberately: **auth → quota → cache →
-admission → breaker-routed backend → metering**. Auth first so anonymous
+fair admission (per-tenant weighted queueing) → breaker-routed backend →
+metering**. Auth first so anonymous
 traffic never touches Redis; quota before cache so an exhausted tenant is
 out of tokens even for cached answers; cache before admission so hits
 don't consume concurrency slots; admission before the backends because
@@ -92,6 +95,10 @@ GPU batch capacity is the scarce resource worth protecting.
 - **Shed early, queue small.** A bounded queue absorbs bursts; beyond it
   the gateway 429s immediately with `Retry-After`. Queueing past capacity
   adds latency, never throughput.
+- **Noisy neighbors shed alone.** Every tenant gets its own bounded
+  queue; freed slots are granted by smooth weighted round-robin, so a
+  flooding tenant 429s itself while everyone else keeps their latency.
+  Fairness is slot-based (honest limit: not token-cost-based — yet).
 - **4xx never fails over.** A bad request is the caller's fault; only 5xx
   and transport errors count against the breaker — client bugs shouldn't
   look like outages.
@@ -191,6 +198,29 @@ queue-saturation warn), and OpenTelemetry traces into Jaeger.
 |---|---|
 | ![Breaker open](docs/assets/dashboard-breaker-open.png) | ![Recovered](docs/assets/dashboard-recovered.png) |
 
+## Multi-tenant fairness, measured
+
+A 40-worker tenant floods the gateway (8 slots) while a 2-worker tenant
+works alongside — same run, same 60 seconds:
+
+| | flooder (40 workers) | light tenant (2 workers) |
+|---|---|---|
+| requests served | 686 | 150 |
+| p50 latency | **3,411 ms** (self-inflicted) | **778 ms** (≈ solo baseline) |
+| p95 latency | 3,470 ms | 1,148 ms |
+| errors | 0 | 0 |
+
+The flooder's queue pins at its own cap (red panel) and sheds; the light
+tenant's queue stays near-empty; error rate holds 0.00% for both:
+
+![Fairness under flood](docs/assets/fairness-demo.png)
+
+The scheduler is smooth weighted round-robin over per-tenant queues —
+`weight: 2` in a tenant's config buys ~2× the slot share under
+contention, interleaved rather than bursty. The eval gate includes a
+`fairness-isolation` check (victim tenant must go 5/5 during a flood),
+so this property is CI-enforced, not aspirational.
+
 ## Hardening history (all of it real)
 
 This platform has been externally code-reviewed and battle-tested; the
@@ -220,7 +250,7 @@ material in [`curriculum/`](curriculum/):
 
 | Path | What it is |
 |---|---|
-| [`services/gateway/`](services/gateway/) | The inference gateway (FastAPI) — breaker, admission, quotas, cache, failover. 23 unit tests. |
+| [`services/gateway/`](services/gateway/) | The inference gateway (FastAPI) — breaker, fair queueing, quotas, cache, failover. 29 unit tests. |
 | [`services/mock-llm/`](services/mock-llm/) | OpenAI-compatible mock model server with failure injection (`POST /control`) |
 | [`services/agent-demo/`](services/agent-demo/) | LangGraph smart-city agent running as tenant #1 |
 | [`infra/terraform/`](infra/terraform/) | GKE, VPC/NAT, IAM + workload identity, spot node pools, Artifact Registry |

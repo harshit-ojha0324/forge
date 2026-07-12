@@ -115,6 +115,38 @@ async def run(args) -> int:
         ok = r.status_code == 200 and "data:" in r.text and "[DONE]" in r.text
         report.add("streaming", ok, f"HTTP {r.status_code}, {len(r.text)} bytes")
 
+        # fairness: one tenant flooding must not affect another tenant
+        if args.second_key:
+            flood = [
+                asyncio.create_task(
+                    client.post(
+                        "/v1/chat/completions",
+                        json=chat_body(f"flood {i}"),
+                        headers=headers,
+                    )
+                )
+                for i in range(40)
+            ]
+            await asyncio.sleep(0.3)  # let the flood saturate the queue
+            ok = 0
+            for i in range(5):
+                r = await client.post(
+                    "/v1/chat/completions",
+                    json=chat_body(f"victim tenant {i}"),
+                    headers={"Authorization": f"Bearer {args.second_key}"},
+                )
+                ok += r.status_code == 200
+            flood_results = await asyncio.gather(*flood, return_exceptions=True)
+            shed = sum(
+                1 for r in flood_results
+                if not isinstance(r, Exception) and r.status_code == 429
+            )
+            report.add(
+                "fairness-isolation",
+                ok == 5,
+                f"{ok}/5 ok for second tenant while flooder had {shed} shed",
+            )
+
         # failover drill: break the primary, prove clients don't notice
         if args.drill:
             if not args.mock_control:
@@ -154,6 +186,8 @@ if __name__ == "__main__":
     parser.add_argument("--key", default="forge-loadtest-localdev-key")
     parser.add_argument("--max-concurrency", type=int, default=4,
                         help="concurrent eval prompts (per-request latency, not queue latency)")
+    parser.add_argument("--second-key", default="forge-demo-localdev-key",
+                        help="second tenant's key for the fairness check ('' to skip)")
     parser.add_argument("--drill", action="store_true")
     parser.add_argument("--mock-control", default="http://localhost:8001",
                         help="mock-vllm control endpoint for the failover drill")
