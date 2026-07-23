@@ -1,4 +1,4 @@
-# Forge — a multi-tenant LLM inference platform
+# Forge, a multi-tenant LLM inference platform
 
 [![CI](https://github.com/harshit-ojha0324/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/harshit-ojha0324/forge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -11,22 +11,22 @@ endpoint in front of self-hosted **vLLM** (spot GPU, scale-to-zero) with
 **circuit-breaker failover to Gemini**, per-tenant API keys, token quotas,
 **weighted fair queueing with per-tenant load shedding**, a Redis response
 cache, and full observability. Provisioned by **Terraform** (remote state
-in GCS), deployed by **ArgoCD** — a git push is the only deploy
-mechanism — with **keyless CI** (workload identity federation, no
+in GCS), deployed by **ArgoCD** (a git push is the only deploy
+mechanism), with **keyless CI** (workload identity federation, no
 credentials anywhere) gated by an **eval suite that includes live
 failover and tenant-isolation drills**.
 
 ## The demo: kill the primary model server under load
 
-![Failover demo — dashboard timelapse](docs/assets/failover-demo.gif)
+![Failover demo, dashboard timelapse](docs/assets/failover-demo.gif)
 
 *Timelapse of a real run: 12-way concurrent load at ~14 req/s. The primary
-(vLLM) is killed mid-run — the breaker trips to OPEN (red), traffic shifts
+(vLLM) is killed mid-run, the breaker trips to OPEN (red), traffic shifts
 to the Gemini backend (yellow area), and the client-visible error rate
 stays pinned at 0.00%. When the primary comes back, a single half-open
 probe closes the breaker and traffic returns home (blue).*
 
-Numbers from that run (local stack, mock model backends — the same
+Numbers from that run (local stack, mock model backends, the same
 gateway code that runs on GKE; a real-GPU preemption drill is stage 6):
 
 | Metric | Value |
@@ -37,7 +37,7 @@ gateway code that runs on GKE; a real-GPU preemption drill is stage 6):
 | p50 / p95 latency | 892 ms / 1,166 ms |
 | Recovery mechanism | 1 half-open probe (no thundering herd) |
 
-Reproduce it yourself — no cloud, no GPU, no API keys needed:
+Reproduce it yourself, no cloud, no GPU, no API keys needed:
 
 ```bash
 make up      # full stack on docker-compose: gateway, mock backends, redis,
@@ -57,7 +57,7 @@ flowchart LR
 
     A & B -->|"API key · OpenAI protocol"| G
 
-    subgraph cluster ["GKE — Terraform-provisioned · private nodes · Cloud NAT"]
+    subgraph cluster ["GKE, Terraform-provisioned · private nodes · Cloud NAT"]
         G["<b>Forge Gateway</b><br/>auth → quota → cache → queue → route"]
         R[("Redis<br/>quotas · response cache")]
         V["vLLM · Qwen2.5-3B<br/>spot T4 · scale-to-zero"]
@@ -90,7 +90,7 @@ GPU batch capacity is the scarce resource worth protecting.
   "known dead" a free routing decision, and its half-open state sends
   exactly one probe at recovery instead of a herd.
 - **Streams fail over only before the first byte.** Once output reached
-  the client, replaying on another backend would duplicate or diverge —
+  the client, replaying on another backend would duplicate or diverge,
   so mid-stream failures terminate honestly and count against the breaker.
 - **Shed early, queue small.** A bounded queue absorbs bursts; beyond it
   the gateway 429s immediately with `Retry-After`. Queueing past capacity
@@ -98,27 +98,27 @@ GPU batch capacity is the scarce resource worth protecting.
 - **Noisy neighbors shed alone.** Every tenant gets its own bounded
   queue; freed slots are granted by smooth weighted round-robin, so a
   flooding tenant 429s itself while everyone else keeps their latency.
-  Fairness is slot-based (honest limit: not token-cost-based — yet).
+  Fairness is slot-based (honest limit: not token-cost-based, yet).
 - **4xx never fails over.** A bad request is the caller's fault; only 5xx
-  and transport errors count against the breaker — client bugs shouldn't
+  and transport errors count against the breaker, client bugs shouldn't
   look like outages.
 - **Only `temperature=0` is cached.** Replaying one sample from a
   sampling distribution silently changes model behaviour.
-- **Quota checks at admission, charges after the response** — pre-reserving
+- **Quota checks at admission, charges after the response.** Pre-reserving
   tokens for an unknown-length response rejects legitimate work; the
   bounded overshoot is documented instead.
 - **Redis fails open.** Quotas and the cache are conveniences, not
   serving dependencies: if Redis dies, requests still serve (unmetered,
-  uncached) and `forge_redis_errors_total` alerts operators — instead of
+  uncached) and `forge_redis_errors_total` alerts operators, instead of
   a metering store outage becoming a client-facing one.
 - **Spot GPU everywhere it's safe.** The breaker is precisely what makes
   a 30-second-notice spot T4 acceptable as the primary backend. Deleting
-  the vLLM app scales the GPU pool — and its bill — to zero.
+  the vLLM app scales the GPU pool, and its bill, to zero.
 
 ## Running in production on GKE
 
 The platform runs live on a GKE cluster provisioned entirely by
-[Terraform](infra/terraform/) — custom VPC, Cloud NAT, **nodes with no
+[Terraform](infra/terraform/): custom VPC, Cloud NAT, **nodes with no
 public IPs**, workload identity (no key files anywhere), a spot CPU pool
 for services and a spot T4 pool that autoscales 0→1 only when the vLLM
 pod schedules.
@@ -138,23 +138,23 @@ PASS  prompt/incident-summary  1.44s via gemini
 DEPLOY GATE: PASS
 ```
 
-Every check served `via gemini` with `forge_breaker_state 2.0` (OPEN) —
+Every check served `via gemini` with `forge_breaker_state 2.0` (OPEN),
 the primary backend *didn't exist on the cluster yet*, and no client ever
 saw an error. The failover architecture validated itself on day one.
 
-### The drill, repeated for real — up to a genuine spot preemption
+### The drill, repeated for real, up to a genuine spot preemption
 
 The demo above uses mock backends; these didn't. Same gateway on GKE,
 primary = actual vLLM serving Qwen2.5-3B on the spot T4. Two escalating
 drills:
 
-**Drill 1 — pod kill.** `kubectl delete pod --grace-period=0 --force`
+**Drill 1, pod kill.** `kubectl delete pod --grace-period=0 --force`
 mid-load, in-flight batched requests and all: 892 requests, 96 via vLLM
 before the kill, 796 via Gemini after in-request failover, **0 × 5xx**,
 p95 2.4 s.
 
-**Drill 2 — real preemption.** `gcloud compute instances
-simulate-maintenance-event` on the spot node — on Spot VMs this triggers
+**Drill 2, real preemption.** `gcloud compute instances
+simulate-maintenance-event` on the spot node. On Spot VMs this triggers
 an actual GCP preemption, so this exercises the whole reclaim path: node
 dies, pods evicted, autoscaler provisions a *fresh* T4, driver install,
 image pull, model download. Load generator ran **inside the cluster**
@@ -168,7 +168,7 @@ image pull, model download. Load generator ran **inside the cluster**
 | Client-visible failures (5xx) | **0** |
 | p50 / p95 latency | 597 ms / 2.4 s |
 
-The cluster's own Prometheus telling the story — three failover events
+The cluster's own Prometheus telling the story: three failover events
 (the kill + two preemptions), and the client-visible error rate flat at
 zero throughout:
 
@@ -194,14 +194,14 @@ kube-prometheus-stack via a sidecar-labeled ConfigMap), Prometheus SLO
 alert rules (client-visible error rate >1% pages; breaker-open and
 queue-saturation warn), and OpenTelemetry traces into Jaeger.
 
-| Breaker OPEN, fallback serving, 0.00% errors | Recovered — the full arc in one chart |
+| Breaker OPEN, fallback serving, 0.00% errors | Recovered, the full arc in one chart |
 |---|---|
 | ![Breaker open](docs/assets/dashboard-breaker-open.png) | ![Recovered](docs/assets/dashboard-recovered.png) |
 
 ## Multi-tenant fairness, measured
 
 A 40-worker tenant floods the gateway (8 slots) while a 2-worker tenant
-works alongside — same run, same 60 seconds:
+works alongside, same run, same 60 seconds:
 
 | | flooder (40 workers) | light tenant (2 workers) |
 |---|---|---|
@@ -215,7 +215,7 @@ tenant's queue stays near-empty; error rate holds 0.00% for both:
 
 ![Fairness under flood](docs/assets/fairness-demo.png)
 
-The scheduler is smooth weighted round-robin over per-tenant queues —
+The scheduler is smooth weighted round-robin over per-tenant queues:
 `weight: 2` in a tenant's config buys ~2× the slot share under
 contention, interleaved rather than bursty. The eval gate includes a
 `fairness-isolation` check (victim tenant must go 5/5 during a flood),
@@ -228,8 +228,9 @@ fixes are in git history with regression tests, and each one is teaching
 material in [`curriculum/`](curriculum/):
 
 - **Breaker HALF_OPEN wedge** (external review): a half-open probe that
-  was a *streaming* request answered with 4xx never resolved the probe —
-  primary permanently disabled. Fixed on both paths + regression test.
+  was a *streaming* request answered with 4xx never resolved the probe,
+  leaving the primary permanently disabled. Fixed on both paths +
+  regression test.
 - **Redis fail-open**: v1.0 shipped with Redis as an accidental hard
   dependency; a dead metering store became a client-facing outage. Now
   quotas/cache degrade gracefully with `forge_redis_errors_total`.
@@ -238,9 +239,9 @@ material in [`curriculum/`](curriculum/):
   config and crashes. `enableServiceLinks: false`.
 - **Single-GPU rolling-update deadlock**: the new pod waits for a GPU
   the old pod won't release until the new one is ready. `strategy:
-  Recreate` — failover absorbs the gap.
+  Recreate`, failover absorbs the gap.
 - **Eval load-profile recalibration**: the deploy gate correctly blocked
-  when real-GPU latency breached an SLO calibrated on mocks — the
+  when real-GPU latency breached an SLO calibrated on mocks; the
   harness was measuring 20-way queue latency, not serving latency. Evals
   now encode concurrency as part of the SLO.
 - **Secrets hygiene**: tenant keys rotated to an out-of-band Secret
@@ -250,12 +251,12 @@ material in [`curriculum/`](curriculum/):
 
 | Path | What it is |
 |---|---|
-| [`services/gateway/`](services/gateway/) | The inference gateway (FastAPI) — breaker, fair queueing, quotas, cache, failover. 29 unit tests. |
+| [`services/gateway/`](services/gateway/) | The inference gateway (FastAPI), breaker, fair queueing, quotas, cache, failover. 29 unit tests. |
 | [`services/mock-llm/`](services/mock-llm/) | OpenAI-compatible mock model server with failure injection (`POST /control`) |
 | [`services/agent-demo/`](services/agent-demo/) | LangGraph smart-city agent running as tenant #1 |
 | [`infra/terraform/`](infra/terraform/) | GKE, VPC/NAT, IAM + workload identity, spot node pools, Artifact Registry |
 | [`deploy/helm/`](deploy/helm/) | Charts: gateway (+ Grafana dashboard ConfigMap), vllm, redis, mock-llm |
-| [`deploy/argocd/`](deploy/argocd/) | App-of-apps — the cluster's table of contents in git |
+| [`deploy/argocd/`](deploy/argocd/) | App-of-apps, the cluster's table of contents in git |
 | [`deploy/local/`](deploy/local/) | docker-compose stack mirroring the cluster |
 | [`observability/`](observability/) | Dashboard JSON + Prometheus SLO alert rules |
 | [`evals/`](evals/) | The 20-prompt eval set + the deploy-gate script |
