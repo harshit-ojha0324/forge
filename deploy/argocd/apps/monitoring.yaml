@@ -12,7 +12,12 @@ spec:
     helm:
       values: |
         grafana:
-          adminPassword: forge-grafana-CHANGE-ME
+          # Credentials come from a Secret created out-of-band
+          # (docs/aws-setup.md §8), never from git.
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
           sidecar:
             dashboards:
               enabled: true

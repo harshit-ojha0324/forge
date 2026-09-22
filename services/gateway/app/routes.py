@@ -33,6 +33,7 @@ from .errors import (
     QueueFull,
     QueueWaitTimeout,
     QuotaExceeded,
+    UsageUnavailable,
 )
 
 router = APIRouter()
@@ -96,7 +97,10 @@ async def usage(request: Request):
         tenant = authenticate(request)
     except AuthError as err:
         return error_response(err)
-    return await request.app.state.quotas.usage(tenant)
+    try:
+        return await request.app.state.quotas.usage(tenant)
+    except UsageUnavailable as err:
+        return error_response(err, retry_after=5)
 
 
 @router.post("/v1/chat/completions")

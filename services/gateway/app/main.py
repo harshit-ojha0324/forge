@@ -1,3 +1,7 @@
+import asyncio
+import contextlib
+import logging
+
 import httpx
 import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
@@ -9,10 +13,39 @@ from .admission import AdmissionController
 from .backends import Backend
 from .breaker import CircuitBreaker
 from .cache import ResponseCache
-from .config import Settings, get_settings, load_tenants
+from .config import Settings, get_settings, load_tenants, tenants_fingerprint
 from .quotas import QuotaManager
 from .routes import router
 from .tracing import setup_tracing
+
+
+log = logging.getLogger("forge.main")
+
+
+def reload_tenants(state) -> bool:
+    """Swap in tenants_file if its content changed; True if it did.
+
+    A file that fails to parse keeps the current tenants: a bad Secret
+    edit must not lock every tenant out."""
+    path = state.settings.tenants_file
+    try:
+        fingerprint = tenants_fingerprint(path)
+        if fingerprint == state.tenants_fingerprint:
+            return False
+        tenants = load_tenants(path)
+    except Exception as exc:
+        log.error("tenants reload failed, keeping current config: %r", exc)
+        return False
+    state.tenants = tenants  # single assignment: requests see old or new, never half
+    state.tenants_fingerprint = fingerprint
+    log.info("tenants reloaded (%d tenants)", len(tenants))
+    return True
+
+
+async def _watch_tenants(state, interval_s: float) -> None:
+    while True:
+        await asyncio.sleep(interval_s)
+        reload_tenants(state)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -22,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         app.state.settings = settings
         app.state.tenants = load_tenants(settings.tenants_file)
+        app.state.tenants_fingerprint = tenants_fingerprint(settings.tenants_file)
         app.state.redis = aioredis.from_url(settings.redis_url, decode_responses=True)
         app.state.http = httpx.AsyncClient(
             timeout=httpx.Timeout(
@@ -59,7 +93,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings.otel_service_name, settings.otel_exporter_otlp_endpoint
         )
         # queue/in-flight gauges are maintained by AdmissionController
+        watcher = (
+            asyncio.create_task(_watch_tenants(app.state, settings.tenants_reload_s))
+            if settings.tenants_reload_s > 0
+            else None
+        )
         yield
+        if watcher:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
         await app.state.http.aclose()
         await app.state.redis.aclose()
 

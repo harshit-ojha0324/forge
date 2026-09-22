@@ -21,7 +21,7 @@ import redis.asyncio as aioredis
 from redis.exceptions import RedisError
 
 from .config import Tenant
-from .errors import QuotaExceeded
+from .errors import QuotaExceeded, UsageUnavailable
 from .metrics import REDIS_ERRORS
 
 log = logging.getLogger("forge.quotas")
@@ -69,7 +69,13 @@ class QuotaManager:
                         exc, tokens)
 
     async def usage(self, tenant: Tenant) -> dict:
-        used = int(await self._redis.get(_usage_key(tenant.name)) or 0)
+        # Unlike check/consume there is nothing to fail open *to*: a usage
+        # report with a made-up number is worse than an honest 503.
+        try:
+            used = int(await self._redis.get(_usage_key(tenant.name)) or 0)
+        except (RedisError, OSError) as exc:
+            REDIS_ERRORS.labels(op="usage").inc()
+            raise UsageUnavailable("usage metering temporarily unavailable") from exc
         return {
             "tenant": tenant.name,
             "used_tokens": used,

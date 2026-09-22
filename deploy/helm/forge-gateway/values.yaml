@@ -1,6 +1,8 @@
 image:
-  # Artifact Registry path (terraform output `registry`).
-  repository: us-central1-docker.pkg.dev/forge-harshit-26/forge/gateway
+  # ECR path (terraform output `image_prefix`). CI's promote job rewrites
+  # repository + tag after every green build on main — this is how a
+  # merged commit reaches the cluster.
+  repository: ACCOUNT_ID.dkr.ecr.us-east-2.amazonaws.com/forge/gateway
   tag: v1.2
   pullPolicy: IfNotPresent
 
@@ -13,9 +15,10 @@ service:
 serviceAccount:
   create: true
   name: gateway
-  # Workload identity: set to the terraform output `gateway_service_account`
-  # to let pods call Google APIs (real Gemini fallback) without key files.
-  gcpServiceAccount: ""
+  # Cloud identity hooks, e.g. on GKE:
+  #   iam.gke.io/gcp-service-account: <sa>@<project>.iam.gserviceaccount.com
+  # EKS Pod Identity needs no annotation (the association lives in AWS).
+  annotations: {}
 
 # Rendered into the pod as FORGE_* env. Values here are the GKE defaults;
 # docker-compose overrides the same knobs locally.
@@ -44,10 +47,15 @@ tenants:
   - name: smart-city-agents
     api_key: forge-sc-CHANGE-ME
     daily_token_quota: 500000
+    weight: 2 # fair-queue share under contention
   - name: demo
     api_key: forge-demo-CHANGE-ME
     daily_token_quota: 100000
 tenantsExistingSecret: "forge-tenants-prod"
+
+# Two replicas on spot nodes: never let a drain take both at once.
+podDisruptionBudget:
+  minAvailable: 1
 
 resources:
   requests:

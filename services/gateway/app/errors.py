@@ -30,6 +30,11 @@ class QueueWaitTimeout(ForgeError):
     error_type = "queue_wait_timeout"
 
 
+class UsageUnavailable(ForgeError):
+    status_code = 503
+    error_type = "usage_unavailable"
+
+
 class AllBackendsFailed(ForgeError):
     status_code = 502
     error_type = "all_backends_failed"

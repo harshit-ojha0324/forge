@@ -280,3 +280,47 @@ async def test_redis_outage_fails_open(client):
     )
     assert r.status_code == 200
     assert r.headers["x-forge-backend"] == "vllm"
+
+
+async def test_usage_returns_503_not_500_when_redis_down(client):
+    import redis.exceptions
+
+    class Exploding:
+        async def get(self, *a, **kw):
+            raise redis.exceptions.ConnectionError("redis down")
+
+    client.forge_app.state.quotas._redis = Exploding()
+    r = await client.get("/v1/usage", headers=AUTH)
+    assert r.status_code == 503
+    assert r.json()["error"]["type"] == "usage_unavailable"
+
+
+async def test_rotated_tenant_keys_apply_without_restart(client, tenants_file):
+    from pathlib import Path
+
+    from app.main import reload_tenants
+
+    state = client.forge_app.state
+    Path(tenants_file).write_text(
+        "tenants:\n"
+        "  - name: alpha\n"
+        "    api_key: rotated-key-alpha\n"
+        "    daily_token_quota: 100000\n"
+    )
+    assert reload_tenants(state) is True
+    old = await client.get("/v1/usage", headers=AUTH)
+    new = await client.get("/v1/usage", headers={"Authorization": "Bearer rotated-key-alpha"})
+    assert old.status_code == 401
+    assert new.status_code == 200
+    assert reload_tenants(state) is False  # unchanged file is a no-op
+
+
+async def test_malformed_tenants_file_keeps_current_config(client, tenants_file):
+    from pathlib import Path
+
+    from app.main import reload_tenants
+
+    Path(tenants_file).write_text("tenants: [this is: not valid")
+    assert reload_tenants(client.forge_app.state) is False
+    r = await client.get("/v1/usage", headers=AUTH)
+    assert r.status_code == 200  # still serving on the last good config

@@ -14,10 +14,26 @@ spec:
       labels:
         {{- include "forge-gateway.selectorLabels" . | nindent 8 }}
       annotations:
-        # Restart pods when tenant config changes.
+        # Restart pods when chart-rendered tenant config changes. (An
+        # out-of-band tenantsExistingSecret is hot-reloaded by the gateway
+        # itself — FORGE_TENANTS_RELOAD_S — so rotation needs no restart.)
         checksum/tenants: {{ .Values.tenants | toYaml | sha256sum }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread the replicas so one spot reclaim can't take both.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "forge-gateway.selectorLabels" . | nindent 14 }}
       containers:
         - name: gateway
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -51,6 +67,11 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:

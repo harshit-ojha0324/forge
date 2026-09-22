@@ -1,0 +1,13 @@
+{{- with .Values.podDisruptionBudget }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: forge-gateway
+  labels:
+    {{- include "forge-gateway.labels" $ | nindent 4 }}
+spec:
+  minAvailable: {{ .minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "forge-gateway.selectorLabels" $ | nindent 6 }}
+{{- end }}

@@ -3,6 +3,7 @@
 Everything is driven by environment variables so the same image runs
 locally (docker-compose) and on GKE (Helm values -> env).
 """
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 
@@ -51,6 +52,10 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://redis:6379/0"
     tenants_file: str = "/etc/forge/tenants.yaml"
+    # How often to re-read tenants_file. Kubernetes updates a mounted
+    # Secret in place (~1 min), so key rotation needs no pod restart.
+    # 0 disables the watcher.
+    tenants_reload_s: float = 30.0
 
     otel_exporter_otlp_endpoint: str = ""
     otel_service_name: str = "forge-gateway"
@@ -61,6 +66,10 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def tenants_fingerprint(path: str) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def load_tenants(path: str) -> dict[str, Tenant]:
