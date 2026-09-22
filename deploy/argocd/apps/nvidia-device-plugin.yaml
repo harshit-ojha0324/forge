@@ -1,0 +1,29 @@
+# Advertises nvidia.com/gpu on GPU nodes so the vllm pod's GPU request
+# can be scheduled. (GKE installed this itself; on EKS it's ours.) Runs
+# only on pool=gpu nodes, so it costs nothing while the GPU is at zero.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nvidia-device-plugin
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://nvidia.github.io/k8s-device-plugin
+    chart: nvidia-device-plugin
+    targetRevision: 0.19.3
+    helm:
+      values: |
+        nodeSelector:
+          pool: gpu
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

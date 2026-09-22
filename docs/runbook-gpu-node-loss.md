@@ -20,6 +20,16 @@ for clients: the gateway's circuit breaker opens after 3 consecutive
 failures and routes everything to the Gemini fallback. Nothing needs to
 happen fast.
 
+> **On EKS** the same story plays out with different actors: EC2 gives a
+> 2-minute spot notice (vs GCP's 30 s), Karpenter receives it via its
+> SQS interruption queue and cordons + drains the node *before* it dies,
+> then launches a replacement from any g4dn spot pool in the 3 AZs.
+> Check `kubectl get nodeclaims` and the Karpenter logs instead of the
+> cluster-autoscaler events below. Common EKS-only causes of a stuck
+> recovery: spot vCPU quota (aws-setup.md §3), missing spot
+> service-linked role (§2), and the device plugin not landing (the node
+> must carry `nvidia.com/gpu.present=true`, set by the NodePool).
+
 ## Automatic recovery sequence (no action needed)
 
 1. Cluster autoscaler sees the Pending vLLM pod and requests a new spot

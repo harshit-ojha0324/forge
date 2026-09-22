@@ -1,0 +1,76 @@
+# The EKS replacement for GKE's gpu-t4 node pool (min 0, max 1, spot,
+# tainted). Karpenter doesn't pre-declare a pool: it watches for pending
+# pods and launches whatever instance satisfies them. Scheduling the vLLM
+# pod (nodeSelector pool=gpu + nvidia.com/gpu toleration + a GPU request)
+# is what summons the node; deleting the vllm app lets consolidation
+# remove it — scale-to-zero, and its bill with it.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: gpu
+spec:
+  # al2023 resolves to the EKS-optimized *NVIDIA* AMI for GPU instance
+  # types: driver + container toolkit baked in. The device plugin that
+  # advertises nvidia.com/gpu is a separate DaemonSet (nvidia-device-plugin app).
+  amiSelectorTerms:
+    - alias: al2023@latest
+  role: forge-karpenter-node # infra/aws/karpenter.tf
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: forge
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: forge
+  blockDeviceMappings:
+    # vLLM image (~10 GB) + model weights on local disk.
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 100Gi
+        volumeType: gp3
+        encrypted: true
+        deleteOnTermination: true
+  tags:
+    karpenter.sh/discovery: forge
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu # tag karpenter.sh/nodepool=gpu is what the FIS drill targets
+spec:
+  template:
+    metadata:
+      labels:
+        pool: gpu # same label the GKE pool had — the vllm chart is unchanged
+        # The device-plugin chart's default affinity only matches nodes
+        # labelled by Node Feature Discovery or with this label. We don't
+        # run NFD, so without it the plugin never lands and vllm stays
+        # Pending forever on a node that has a GPU.
+        nvidia.com/gpu.present: "true"
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: gpu
+      taints:
+        - key: nvidia.com/gpu
+          value: present
+          effect: NoSchedule
+      requirements:
+        # T4 (compute capability 7.5, fp16) — matches the vllm chart's
+        # dtype=half. 2xlarge is only a capacity fallback; Karpenter
+        # picks the cheapest offering that fits.
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["g4dn.xlarge", "g4dn.2xlarge"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"] # add "on-demand" to trade cost for availability
+      expireAfter: 168h
+  # Hard ceiling on spend: never more than one GPU, whatever is pending.
+  limits:
+    nvidia.com/gpu: 1
+  disruption:
+    # Only remove EMPTY nodes: consolidating a busy GPU node would kill
+    # in-flight generations to save pennies.
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 5m

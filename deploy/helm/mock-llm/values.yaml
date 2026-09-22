@@ -1,5 +1,5 @@
 image:
-  repository: us-central1-docker.pkg.dev/forge-harshit-26/forge/mock-llm
+  repository: ACCOUNT_ID.dkr.ecr.us-east-2.amazonaws.com/forge/mock-llm # rewritten by CI promote
   tag: v1
 
 # Install this chart twice with different names/values:

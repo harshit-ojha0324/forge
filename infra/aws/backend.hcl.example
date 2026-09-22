@@ -1,0 +1,6 @@
+# Copy to backend.hcl, then: terraform init -backend-config=backend.hcl
+bucket       = "forge-<account-id>-tfstate"
+key          = "forge/terraform.tfstate"
+region       = "us-east-2"
+use_lockfile = true
+encrypt      = true

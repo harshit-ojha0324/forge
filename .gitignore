@@ -9,6 +9,7 @@ __pycache__/
 *.tfstate
 *.tfstate.backup
 terraform.tfvars
+backend.hcl
 .terraform.lock.hcl
 
 # local tooling & artifacts

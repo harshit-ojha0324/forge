@@ -1,9 +1,46 @@
 # Cost breakdown
 
-*Prices are us-central1 list prices as of mid-2026; check current rates.
-The design goal: idle cost near zero, demo cost measured in cents.*
+*The design goal: idle cost near zero, demo cost measured in cents.
+Prices are list prices as of 2026; check current rates.*
 
-## Steady state (what runs 24/7 if you leave it up)
+## AWS / EKS (current target, us-east-2)
+
+The big difference from GKE: **the EKS control plane is never free**, so
+an idle AWS stack costs roughly 3× the GKE one. Teardown discipline
+matters more here, not less.
+
+| Item | Spec | ~$/hr | ~$/day |
+|---|---|---|---|
+| EKS control plane | 1.35, **standard** support | $0.10 | $2.40 |
+| NAT gateway + its public IPv4 | one, shared by 3 AZs | $0.05 + $0.045/GB | $1.20 |
+| services node group | 2 × t3.large-class **spot** | ~$0.06 | ~$1.45 |
+| EBS | 2 × 50 GB gp3 | ~$0.01 | $0.27 |
+| ECR | few GB, 20 images/repo kept | — | < $0.05 |
+| **idle total** | | **~$0.22** | **~$5.30** |
+
+⚠ Two traps specific to EKS:
+- **Extended support** bills the control plane at **$0.60/hr** (6×)
+  once a Kubernetes version leaves standard support (~14 months after
+  release). Bump `kubernetes_version` before that happens.
+- **Orphaned Karpenter instances**: GPU nodes are launched by Karpenter,
+  not Terraform, so `terraform destroy` doesn't know about them. Follow
+  the teardown order in [aws-setup.md §10](aws-setup.md).
+
+GPU on (demos only):
+
+| Item | Spec | ~$/hr |
+|---|---|---|
+| g4dn.xlarge **spot** | 4 vCPU / 16 GB / 1 × T4 | ~$0.16–0.25 (on-demand $0.53) |
+| 100 GB gp3 root | image + model weights | ~$0.01 |
+| NAT data | ~16 GB image + weights per fresh node, from Docker Hub/HF | ~$0.70 per node boot |
+| FIS spot-interruption drill | 2-minute action | ~$0.20 per run |
+
+A 2-hour GPU session on top of the idle stack ≈ **$1.50–2.00**.
+Pause the whole thing between sessions: rebuild is ~20 min from S3 state.
+
+## GKE (archived July–Aug 2026 build)
+
+### Steady state (what runs 24/7 if you leave it up)
 
 | Item | Spec | ~$/hr | ~$/mo |
 |---|---|---|---|
@@ -17,7 +54,7 @@ The design goal: idle cost near zero, demo cost measured in cents.*
 whole stack between sessions (`terraform destroy` — everything is code,
 rebuild is ~15 min) or accept it for the active week and destroy after.
 
-## When the GPU is on (demos and dev sessions only)
+### When the GPU is on (demos and dev sessions only)
 
 | Item | Spec | ~$/hr |
 |---|---|---|
@@ -45,7 +82,7 @@ dashboard quantifies exactly what shifted to the paid API.
 
 ## Cost discipline checklist
 
-- [ ] `terraform destroy` at the end of every session (state is in git + GCS)
+- [ ] `terraform destroy` at the end of every session (state is in S3; on AWS follow aws-setup.md §10 order)
 - [ ] vLLM app deleted (GPU pool at 0) whenever not actively demoing
-- [ ] Billing budget alert at $25 and $50 (docs/gcp-setup.md sets it up)
+- [ ] Billing budget alert at $25 and $50 (aws-setup.md §1)
 - [ ] Spot everywhere; nothing in this lab justifies on-demand

@@ -10,11 +10,11 @@ An inference gateway + agent runtime on Kubernetes: one OpenAI-compatible
 endpoint in front of self-hosted **vLLM** (spot GPU, scale-to-zero) with
 **circuit-breaker failover to Gemini**, per-tenant API keys, token quotas,
 **weighted fair queueing with per-tenant load shedding**, a Redis response
-cache, and full observability. Provisioned by **Terraform** (remote state
-in GCS), deployed by **ArgoCD** (a git push is the only deploy
-mechanism), with **keyless CI** (workload identity federation, no
-credentials anywhere) gated by an **eval suite that includes live
-failover and tenant-isolation drills**.
+cache, and full observability. Provisioned by **Terraform** (built and
+drilled on GKE; now moving to **EKS + Karpenter**), deployed by
+**ArgoCD** (a git push is the only deploy mechanism), with **keyless CI**
+(OIDC federation, no credentials anywhere) gated by an **eval suite that
+includes live failover and tenant-isolation drills**.
 
 ## The demo: kill the primary model server under load
 
@@ -43,7 +43,7 @@ Reproduce it yourself, no cloud, no GPU, no API keys needed:
 make up      # full stack on docker-compose: gateway, mock backends, redis,
              # prometheus, grafana, jaeger
 make demo    # 60s load + kill + revive; watch localhost:3000/d/forge-overview
-make evals   # the 25-check deploy gate, incl. the failover drill
+make evals   # the 26-check deploy gate, incl. the failover drill
 ```
 
 ## Architecture
@@ -179,13 +179,37 @@ provisions), the model reloads, readiness passes, and the breaker's
 half-open probe brings traffic home (~5–10 min pod-level, ~10–15 min
 node-level; see the [runbook](docs/runbook-gpu-node-loss.md)).
 
+### Moving to AWS (in progress, Sept 2026)
+
+The GKE build above is archived in [`infra/gcp/`](infra/gcp/). The AWS
+port lives in [`infra/aws/`](infra/aws/) and is written, validated, and
+documented, **but not yet applied**. Nothing below has drill numbers yet:
+
+- **EKS 1.35** in a 3-AZ private-node VPC; a spot managed node group for
+  services, and **Karpenter** for the GPU: a spot `g4dn.xlarge` (T4)
+  that exists only while the vLLM pod is pending or running, capped at
+  one GPU by the NodePool's limits.
+- **Spot interruptions handled, not just survived**: EventBridge → SQS →
+  Karpenter cordons and drains the GPU node inside AWS's 2-minute notice.
+  The drill becomes a real **AWS FIS** spot interruption
+  ([`fis.tf`](infra/aws/fis.tf)) instead of GCP's maintenance event.
+- **Keyless everything**: GitHub OIDC → a push-only IAM role for CI; EKS
+  Pod Identity for Karpenter; S3 state with native locking.
+- Cost is the honest trade-off: unlike GKE's zonal free tier, the EKS
+  control plane always bills, so idle is ~$5/day vs ~$1.60
+  ([cost.md](docs/cost.md)).
+
+Setup, GPU day, the FIS drill and teardown order: [docs/aws-setup.md](docs/aws-setup.md).
+
 ### CI: evals gate the deploy
 
 [The pipeline](.github/workflows/ci.yml) runs unit tests → boots the full
-compose stack → runs the 25-check eval suite **including a live failover
-drill** → only then builds and pushes images for ArgoCD to roll out. A
-gateway regression, a broken chart value, or a failed drill blocks the
-artifact from ever existing.
+compose stack → runs the 26-check eval suite **including a live failover
+drill** → only then builds and pushes images, and a `promote` job
+commits the new immutable tag into the Helm values, which is what ArgoCD
+rolls out. CI never touches the cluster; every deploy is a revertable
+commit. A gateway regression, a broken chart value, or a failed drill
+blocks the artifact from ever existing.
 
 ## Observability
 
@@ -251,24 +275,28 @@ material in [`curriculum/`](curriculum/):
 
 | Path | What it is |
 |---|---|
-| [`services/gateway/`](services/gateway/) | The inference gateway (FastAPI), breaker, fair queueing, quotas, cache, failover. 29 unit tests. |
+| [`services/gateway/`](services/gateway/) | The inference gateway (FastAPI), breaker, fair queueing, quotas, cache, failover. 32 unit tests. |
 | [`services/mock-llm/`](services/mock-llm/) | OpenAI-compatible mock model server with failure injection (`POST /control`) |
 | [`services/agent-demo/`](services/agent-demo/) | LangGraph smart-city agent running as tenant #1 |
-| [`infra/terraform/`](infra/terraform/) | GKE, VPC/NAT, IAM + workload identity, spot node pools, Artifact Registry |
+| [`infra/aws/`](infra/aws/) | EKS, VPC/NAT, Karpenter (spot GPU + interruption queue), ECR, GitHub OIDC CI role, FIS spot drill |
+| [`infra/gcp/`](infra/gcp/) | Archived GKE build the drills ran on: VPC/NAT, workload identity, spot node pools, Artifact Registry |
 | [`deploy/helm/`](deploy/helm/) | Charts: gateway (+ Grafana dashboard ConfigMap), vllm, redis, mock-llm |
 | [`deploy/argocd/`](deploy/argocd/) | App-of-apps, the cluster's table of contents in git |
+| [`deploy/karpenter/`](deploy/karpenter/) | GPU NodePool + EC2NodeClass (what Karpenter may launch) |
 | [`deploy/local/`](deploy/local/) | docker-compose stack mirroring the cluster |
 | [`observability/`](observability/) | Dashboard JSON + Prometheus SLO alert rules |
 | [`evals/`](evals/) | The 20-prompt eval set + the deploy-gate script |
 | [`loadtest/`](loadtest/) | Python load generator + k6 profile |
-| [`docs/`](docs/) | [Architecture](docs/architecture.md) · [GPU-loss runbook](docs/runbook-gpu-node-loss.md) · [Cost breakdown](docs/cost.md) · [GCP setup](docs/gcp-setup.md) |
+| [`docs/`](docs/) | [Architecture](docs/architecture.md) · [GPU-loss runbook](docs/runbook-gpu-node-loss.md) · [Cost breakdown](docs/cost.md) · [AWS setup](docs/aws-setup.md) · [GCP setup (archived)](docs/gcp-setup.md) |
 | [`curriculum/`](curriculum/) | Rebuild-and-defend learning program with teach-back question banks |
 
 ## Cost
 
 Designed to be almost free: local stage is $0; the cloud footprint is
-spot-everything, a free-tier-credited zonal control plane, and a GPU pool
-that only exists while a demo is running (~$0.20/hr when on). Full
+spot-everything and a GPU that only exists while a demo is running
+(~$0.20/hr when on). On GKE the zonal control plane was free-tier
+credited; on EKS it isn't (~$5/day idle), so the stack is torn down
+between sessions. Full
 breakdown and teardown discipline in [docs/cost.md](docs/cost.md).
 
 ## License

@@ -1,5 +1,9 @@
 # GCP setup — from zero to `terraform apply`
 
+> **Archived (Sept 2026).** Forge is moving to AWS; see
+> [aws-setup.md](aws-setup.md). This is the exact path the GKE build and
+> its drills (README) ran on, kept so they stay reproducible.
+
 One-time setup, ~30 minutes of work plus a wait for GPU quota approval.
 Do the quota request (§4) on day one — approval can take up to a day.
 
@@ -52,13 +56,13 @@ gsutil versioning set on gs://<project-id>-tfstate
 ```
 
 Set the bucket in the `backend "gcs"` block in
-`infra/terraform/versions.tf`, then `terraform init -migrate-state`.
+`infra/gcp/versions.tf`, then `terraform init -migrate-state`.
 Forks: change the bucket name to your own before init.
 
 ## 6. Provision
 
 ```bash
-cd infra/terraform
+cd infra/gcp
 cp terraform.tfvars.example terraform.tfvars   # set project_id
 terraform init
 terraform plan     # READ the plan — it's the interview answer sheet
@@ -67,6 +71,15 @@ terraform apply    # ~10 min, mostly the cluster
 $(terraform output -raw get_credentials)       # point kubectl at the cluster
 kubectl get nodes                              # 1 services node, no GPU node
 ```
+
+> **If the Artifact Registry repo already exists** (CI needs it even when the
+> cluster is torn down, so it is often created ahead of `terraform apply`),
+> the apply will fail with `ALREADY_EXISTS`. Adopt it into state first:
+>
+> ```bash
+> terraform import google_artifact_registry_repository.forge \
+>   projects/$PROJECT_ID/locations/us-central1/repositories/forge
+> ```
 
 ## 7. Push images to Artifact Registry
 

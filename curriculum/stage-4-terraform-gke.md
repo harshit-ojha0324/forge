@@ -27,7 +27,7 @@ quota requested on day one** — it can take 24h).
 5. Spot economics: 60–90% discount for a 30s-preemption contract — and
    why stage 1's breaker is what makes spot *safe to use*.
 
-Reading: every file in `infra/terraform/` (they're commented), then
+Reading: every file in `infra/gcp/` (they're commented), then
 `docs/cost.md`.
 
 ## Labs
