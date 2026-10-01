@@ -256,13 +256,15 @@ async def _handle_stream(state, tenant, payload, span, started) -> StreamingResp
 
     span.set_attribute("forge.backend", backend_used.name)
     return StreamingResponse(
-        _forward_stream(state, tenant, handle, backend_used, started),
+        _forward_stream(state, tenant, payload, handle, backend_used, started),
         media_type="text/event-stream",
         headers={"x-forge-backend": backend_used.name, "x-forge-cache": "bypass"},
     )
 
 
-async def _forward_stream(state, tenant, handle: StreamHandle, backend: Backend, started):
+async def _forward_stream(
+    state, tenant, payload, handle: StreamHandle, backend: Backend, started
+):
     """Forward SSE lines, watching them for the usage chunk so streamed
     requests are metered. Cleanup happens in `finally` without awaiting
     (a client disconnect delivers GeneratorExit, where awaits are unsafe);
@@ -301,8 +303,9 @@ async def _forward_stream(state, tenant, handle: StreamHandle, backend: Backend,
     finally:
         state.admission.release()
         if prompt_toks + completion_toks == 0 and completion_chars:
+            # No usage chunk from upstream: estimate both sides, as unary does.
+            prompt_toks = estimate_tokens(json.dumps(payload.get("messages", [])))
             completion_toks = max(completion_chars // 4, 1)
-            prompt_toks = 0
         metrics.TOKENS.labels(tenant.name, "prompt").inc(prompt_toks)
         metrics.TOKENS.labels(tenant.name, "completion").inc(completion_toks)
         metrics.LATENCY.labels(backend.name).observe(time.monotonic() - started)

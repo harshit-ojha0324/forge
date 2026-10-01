@@ -231,6 +231,19 @@ async def test_streaming_fails_over_before_first_token(client):
     assert "fallback stream" in r.text
 
 
+@respx.mock
+async def test_stream_without_usage_chunk_still_meters_the_prompt(client):
+    respx.post(PRIMARY).respond(
+        content=sse_body(["12345678"]), headers={"content-type": "text/event-stream"}
+    )
+    body = chat_request(stream=True, content="x" * 400)
+    await client.post("/v1/chat/completions", json=body, headers=AUTH)
+    await asyncio.sleep(0.05)  # let the finalize task record usage
+    usage = await client.get("/v1/usage", headers=AUTH)
+    # ~100 prompt tokens estimated from the 400-char message, 2 completion
+    assert usage.json()["used_tokens"] > 100
+
+
 async def test_models_endpoint_advertises_alias(client):
     r = await client.get("/v1/models")
     assert r.json()["data"][0]["id"] == "forge-default"
