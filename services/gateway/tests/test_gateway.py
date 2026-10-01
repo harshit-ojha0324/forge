@@ -6,6 +6,7 @@ import pytest
 import respx
 from prometheus_client import REGISTRY
 
+from app import routes
 from conftest import AUTH, AUTH_BETA, chat_request, completion_body
 
 PRIMARY = "http://primary.test/v1/chat/completions"
@@ -225,6 +226,7 @@ async def test_streaming_passthrough(client):
     await asyncio.sleep(0.05)  # let the finalize task record usage
     usage = await client.get("/v1/usage", headers=AUTH)
     assert usage.json()["used_tokens"] == 7
+    assert not routes._background_tasks  # finished tasks are released
 
 
 @respx.mock

@@ -38,6 +38,17 @@ from .errors import (
 
 router = APIRouter()
 
+# The event loop only weakly references tasks: without a strong reference
+# a fire-and-forget breaker update or quota charge can be garbage-collected
+# before it runs (see asyncio.create_task docs).
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.get_running_loop().create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 def authenticate(request: Request) -> Tenant:
     auth = request.headers.get("authorization", "")
@@ -299,7 +310,7 @@ async def _forward_stream(
         if backend is state.primary:
             # can't await in this except path safely on disconnects either;
             # schedule the breaker update.
-            asyncio.get_running_loop().create_task(state.breaker.record_failure())
+            _spawn(state.breaker.record_failure())
     finally:
         state.admission.release()
         if prompt_toks + completion_toks == 0 and completion_chars:
@@ -310,9 +321,7 @@ async def _forward_stream(
         metrics.TOKENS.labels(tenant.name, "completion").inc(completion_toks)
         metrics.LATENCY.labels(backend.name).observe(time.monotonic() - started)
         metrics.REQUESTS.labels(tenant.name, backend.name, outcome).inc()
-        asyncio.get_running_loop().create_task(
-            _finalize_stream(state, tenant, handle, prompt_toks + completion_toks)
-        )
+        _spawn(_finalize_stream(state, tenant, handle, prompt_toks + completion_toks))
 
 
 async def _finalize_stream(state, tenant, handle: StreamHandle, total_tokens: int):
