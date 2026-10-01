@@ -40,6 +40,13 @@ class StreamHandle:
         await self._response.aclose()
 
 
+def _is_backend_fault(status: int) -> bool:
+    # 5xx, plus 401/403: upstream rejected the *gateway's* credentials,
+    # which the caller can't fix — fail over and count it, don't echo it
+    # back as if the caller's own key were bad.
+    return status >= 500 or status in (401, 403)
+
+
 class Backend:
     def __init__(
         self,
@@ -73,10 +80,10 @@ class Backend:
             )
         except httpx.HTTPError as exc:
             raise BackendError(self.name, f"transport error: {exc!r}") from exc
-        if response.status_code >= 500:
+        if _is_backend_fault(response.status_code):
             raise BackendError(self.name, f"upstream {response.status_code}")
         if response.status_code >= 400:
-            # 4xx is the caller's fault (bad request, context too long):
+            # Other 4xx is the caller's fault (bad request, context too long):
             # surface it, don't trip the breaker or retry elsewhere.
             raise UpstreamClientError(response.status_code, response.text)
         # A 2xx that isn't a JSON object (proxy error page, truncated body)
@@ -101,7 +108,7 @@ class Backend:
             response = await self._client.send(request, stream=True)
         except httpx.HTTPError as exc:
             raise BackendError(self.name, f"transport error: {exc!r}") from exc
-        if response.status_code >= 500:
+        if _is_backend_fault(response.status_code):
             await response.aread()
             await response.aclose()
             raise BackendError(self.name, f"upstream {response.status_code}")

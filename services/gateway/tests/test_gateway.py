@@ -167,6 +167,17 @@ async def test_upstream_4xx_passes_through_without_failover(client):
 
 
 @respx.mock
+async def test_upstream_auth_rejection_fails_over_and_trips_breaker(client):
+    primary = respx.post(PRIMARY).respond(status_code=401)  # gateway's vLLM key is wrong
+    respx.post(FALLBACK).respond(json=completion_body())
+    for _ in range(3):  # breaker threshold is 2
+        r = await client.post("/v1/chat/completions", json=chat_request(), headers=AUTH)
+        assert r.status_code == 200
+        assert r.headers["x-forge-backend"] == "gemini"
+    assert primary.call_count == 2  # breaker opened; third request skipped vllm
+
+
+@respx.mock
 async def test_all_backends_down_returns_502(client):
     respx.post(PRIMARY).respond(status_code=500)
     respx.post(FALLBACK).mock(side_effect=httpx.ConnectError("down"))
