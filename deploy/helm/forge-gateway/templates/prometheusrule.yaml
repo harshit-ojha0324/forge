@@ -1,0 +1,12 @@
+{{- if .Values.serviceMonitor.enabled }}
+# The SLO/breaker/queue alerts. alerts.yml is also mounted as-is by the
+# local docker-compose Prometheus: one file, both environments.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: forge-gateway
+  labels:
+    {{- include "forge-gateway.labels" . | nindent 4 }}
+spec:
+{{ .Files.Get "alerts.yml" | indent 2 }}
+{{- end }}

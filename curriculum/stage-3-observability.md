@@ -22,7 +22,7 @@ from scratch.
    what OTel spans/attributes/context propagation are.
 
 Reading: `app/metrics.py`, `app/tracing.py`,
-`observability/prometheus/alerts.yml`, the dashboard JSON (skim), and
+`deploy/helm/forge-gateway/alerts.yml`, the dashboard JSON (skim), and
 `docs/architecture.md` §8.
 
 ## Labs

@@ -54,7 +54,7 @@ services:
     image: prom/prometheus:v2.53.0
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ../../observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ../helm/forge-gateway/alerts.yml:/etc/prometheus/alerts.yml:ro
     ports:
       - "9090:9090"
 

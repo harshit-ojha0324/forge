@@ -1,5 +1,6 @@
 """Prometheus metrics. Names are the contract with the Grafana dashboards
-and alert rules in observability/ — change them together."""
+and the alert rules in deploy/helm/forge-gateway/alerts.yml — change them
+together."""
 from prometheus_client import Counter, Gauge, Histogram
 
 LATENCY_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 30, 60)
