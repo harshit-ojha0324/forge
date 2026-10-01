@@ -42,3 +42,26 @@ spec:
     - name: redis
       port: 6379
       targetPort: redis
+---
+# Only the gateway may reach Redis: anyone else could rewrite the
+# forge:usage:* quota counters or poison the response cache. Enforced by
+# the VPC CNI network policy agent (enableNetworkPolicy in infra/aws/eks.tf).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forge-redis
+  labels:
+    app.kubernetes.io/name: forge-redis
+    app.kubernetes.io/part-of: forge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: forge-redis
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: forge-gateway
+      ports:
+        - port: 6379

@@ -22,6 +22,10 @@ module "eks" {
     kube-proxy = {}
     vpc-cni = {
       before_compute = true
+      # Without this the cluster silently ignores NetworkPolicy objects,
+      # and the vllm/redis policies that keep clients off the backends
+      # (only the gateway may call them) do nothing.
+      configuration_values = jsonencode({ enableNetworkPolicy = "true" })
     }
     # Pod Identity: how Karpenter's controller gets AWS credentials —
     # the EKS analogue of GKE workload identity, no key files.
