@@ -167,6 +167,12 @@ async def chat_completions(request: Request):
             metrics.REQUESTS.labels(tenant.name, "none", "all_backends_failed").inc()
             span.set_attribute("forge.outcome", "all_backends_failed")
             return error_response(err)
+        except Exception:
+            # Anything unexpected is still a client-visible 500: count it so
+            # the error-rate SLO alert sees it.
+            metrics.REQUESTS.labels(tenant.name, "none", "error").inc()
+            span.set_attribute("forge.outcome", "error")
+            raise
 
 
 async def _handle_unary(state, tenant, payload, span, started) -> JSONResponse:

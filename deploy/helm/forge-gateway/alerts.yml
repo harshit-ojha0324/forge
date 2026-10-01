@@ -3,10 +3,11 @@ groups:
     rules:
       # The headline SLO: less than 1% of requests may fail. Failover is
       # invisible to clients, so this only fires when BOTH backends are
-      # unhealthy or the gateway itself is broken.
+      # unhealthy, the admission queue is timing out (503s), or the gateway
+      # itself is broken (unexpected 500s, counted as outcome="error").
       - alert: ForgeErrorRateSLOBreach
         expr: |
-          sum(rate(forge_requests_total{outcome=~"all_backends_failed|stream_error|error"}[5m]))
+          sum(rate(forge_requests_total{outcome=~"all_backends_failed|stream_error|queue_wait_timeout|error"}[5m]))
             /
           sum(rate(forge_requests_total[5m])) > 0.01
         for: 2m
@@ -14,7 +15,7 @@ groups:
           severity: page
         annotations:
           summary: "Forge error rate above the 1% SLO"
-          description: "Client-visible failures exceeded 1% of requests for 2 minutes. Failover has been exhausted — check both backends. Runbook: docs/runbook-gpu-node-loss.md"
+          description: "Client-visible failures exceeded 1% of requests for 2 minutes. Failover is exhausted (check both backends) or requests are timing out in the admission queue (check capacity). Runbook: docs/runbook-gpu-node-loss.md"
 
       - alert: ForgeLatencySLOBreach
         expr: |

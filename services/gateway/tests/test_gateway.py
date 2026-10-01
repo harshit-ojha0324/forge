@@ -2,7 +2,9 @@ import asyncio
 import json
 
 import httpx
+import pytest
 import respx
+from prometheus_client import REGISTRY
 
 from conftest import AUTH, AUTH_BETA, chat_request, completion_body
 
@@ -171,6 +173,16 @@ async def test_all_backends_down_returns_502(client):
     r = await client.post("/v1/chat/completions", json=chat_request(), headers=AUTH)
     assert r.status_code == 502
     assert r.json()["error"]["type"] == "all_backends_failed"
+
+
+@respx.mock
+async def test_unexpected_exception_is_counted_for_the_slo_alert(client):
+    labels = {"tenant": "alpha", "backend": "none", "outcome": "error"}
+    before = REGISTRY.get_sample_value("forge_requests_total", labels) or 0
+    respx.post(PRIMARY).mock(side_effect=RuntimeError("bug"))
+    with pytest.raises(RuntimeError):  # ASGITransport re-raises the 500's cause
+        await client.post("/v1/chat/completions", json=chat_request(), headers=AUTH)
+    assert REGISTRY.get_sample_value("forge_requests_total", labels) == before + 1
 
 
 def sse_body(chunks, usage=None):
