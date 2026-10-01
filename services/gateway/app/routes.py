@@ -135,7 +135,7 @@ async def chat_completions(request: Request):
             span.set_attribute("forge.outcome", "quota_exhausted")
             return error_response(err, retry_after=3600)
 
-        cached = await state.cache.get(payload)
+        cached = await state.cache.get(tenant.name, payload)
         if cached is not None:
             metrics.CACHE_EVENTS.labels(result="hit").inc()
             metrics.REQUESTS.labels(tenant.name, "cache", "ok").inc()
@@ -202,7 +202,7 @@ async def _handle_unary(state, tenant, payload, span, started) -> JSONResponse:
         metrics.TOKENS.labels(tenant.name, "completion").inc(completion_toks)
         metrics.LATENCY.labels(backend.name).observe(time.monotonic() - started)
         metrics.REQUESTS.labels(tenant.name, backend.name, "ok").inc()
-        if await state.cache.put(payload, response):
+        if await state.cache.put(tenant.name, payload, response):
             metrics.CACHE_EVENTS.labels(result="store").inc()
         span.set_attribute("forge.backend", backend.name)
         span.set_attribute("forge.tokens.completion", completion_toks)

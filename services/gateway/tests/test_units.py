@@ -72,13 +72,25 @@ async def test_admission_times_out_waiting():
 def test_cache_key_ignores_irrelevant_fields():
     a = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "temperature": 0}
     b = dict(a, user="someone-else", metadata={"x": 1})
-    assert cache_key(a) == cache_key(b)
+    assert cache_key("t", a) == cache_key("t", b)
 
 
 def test_cache_key_changes_with_messages():
     a = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "temperature": 0}
     b = dict(a, messages=[{"role": "user", "content": "bye"}])
-    assert cache_key(a) != cache_key(b)
+    assert cache_key("t", a) != cache_key("t", b)
+
+
+def test_cache_key_changes_with_output_shaping_params():
+    a = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "temperature": 0}
+    for extra in ({"tools": [{"type": "function"}]},
+                  {"response_format": {"type": "json_object"}}, {"seed": 7}):
+        assert cache_key("t", a) != cache_key("t", dict(a, **extra))
+
+
+def test_cache_key_is_per_tenant():
+    a = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "temperature": 0}
+    assert cache_key("alpha", a) != cache_key("beta", a)
 
 
 def test_only_deterministic_nonstreaming_is_cacheable():

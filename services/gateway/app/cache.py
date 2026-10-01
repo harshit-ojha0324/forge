@@ -3,8 +3,11 @@
 Only deterministic, non-streaming requests are cached (temperature == 0,
 stream == false): with sampling enabled, identical prompts legitimately
 produce different completions, and replaying one would silently change
-model behaviour. The key hashes the full request shape so any change in
-messages, model, or sampling params is a different entry.
+model behaviour. The key hashes the whole request minus a few fields that
+cannot change the output, so any parameter (tools, response_format, seed,
+...) is a different entry: an unknown field costs a miss, never a wrong
+answer. Entries are per tenant: a shared hit would tell one tenant what
+another one asked.
 
 Upgrading this to a semantic cache (embed the prompt, ANN-search for a
 near-duplicate) only requires replacing `cache_key` — the interface is
@@ -21,19 +24,20 @@ from .metrics import REDIS_ERRORS
 
 log = logging.getLogger("forge.cache")
 
-CACHEABLE_KEYS = ("model", "messages", "temperature", "top_p", "max_tokens", "n", "stop")
+# Request fields that never change the completion, so never split the cache.
+IGNORED_KEYS = frozenset({"stream", "stream_options", "user", "metadata"})
 
 
 def is_cacheable(payload: dict) -> bool:
     return not payload.get("stream", False) and payload.get("temperature", 1.0) == 0
 
 
-def cache_key(payload: dict) -> str:
-    material = {k: payload.get(k) for k in CACHEABLE_KEYS}
+def cache_key(tenant: str, payload: dict) -> str:
+    material = {k: v for k, v in payload.items() if k not in IGNORED_KEYS}
     digest = hashlib.sha256(
         json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    return f"forge:cache:{digest}"
+    return f"forge:cache:{tenant}:{digest}"
 
 
 class ResponseCache:
@@ -42,11 +46,11 @@ class ResponseCache:
         self._ttl_s = ttl_s
         self.enabled = enabled
 
-    async def get(self, payload: dict) -> dict | None:
+    async def get(self, tenant: str, payload: dict) -> dict | None:
         if not (self.enabled and is_cacheable(payload)):
             return None
         try:
-            raw = await self._redis.get(cache_key(payload))
+            raw = await self._redis.get(cache_key(tenant, payload))
         except (RedisError, OSError) as exc:
             # A dead cache is a slow day, not an outage: fail open.
             REDIS_ERRORS.labels(op="cache_get").inc()
@@ -54,12 +58,12 @@ class ResponseCache:
             return None
         return json.loads(raw) if raw else None
 
-    async def put(self, payload: dict, response: dict) -> bool:
+    async def put(self, tenant: str, payload: dict, response: dict) -> bool:
         if not (self.enabled and is_cacheable(payload)):
             return False
         try:
             await self._redis.set(
-                cache_key(payload), json.dumps(response), ex=self._ttl_s
+                cache_key(tenant, payload), json.dumps(response), ex=self._ttl_s
             )
         except (RedisError, OSError) as exc:
             REDIS_ERRORS.labels(op="cache_put").inc()
