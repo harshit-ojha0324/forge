@@ -79,7 +79,16 @@ class Backend:
             # 4xx is the caller's fault (bad request, context too long):
             # surface it, don't trip the breaker or retry elsewhere.
             raise UpstreamClientError(response.status_code, response.text)
-        return response.json()
+        # A 2xx that isn't a JSON object (proxy error page, truncated body)
+        # is an upstream failure: it must reach the breaker and fail over,
+        # or a half-open probe never resolves and the primary stays off.
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise BackendError(self.name, "upstream 2xx with a non-JSON-object body")
+        return body
 
     async def start_stream(self, payload: dict) -> StreamHandle:
         request = self._client.build_request(

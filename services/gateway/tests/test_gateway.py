@@ -74,6 +74,27 @@ async def test_breaker_opens_then_recovers(client):
 
 
 @respx.mock
+async def test_garbage_2xx_probe_reopens_breaker_instead_of_wedging(client):
+    primary = respx.post(PRIMARY).respond(status_code=500)
+    respx.post(FALLBACK).respond(json=completion_body())
+    for _ in range(2):
+        await client.post("/v1/chat/completions", json=chat_request(), headers=AUTH)
+
+    # the half-open probe gets a 200 that isn't JSON: fail over, count it
+    await asyncio.sleep(0.25)
+    primary.respond(status_code=200, text="<html>bad gateway</html>")
+    r = await client.post("/v1/chat/completions", json=chat_request(), headers=AUTH)
+    assert r.status_code == 200
+    assert r.headers["x-forge-backend"] == "gemini"
+
+    # the probe resolved, so the next cooldown lets a new probe through
+    await asyncio.sleep(0.25)
+    primary.respond(json=completion_body())
+    r = await client.post("/v1/chat/completions", json=chat_request(), headers=AUTH)
+    assert r.headers["x-forge-backend"] == "vllm"
+
+
+@respx.mock
 async def test_quota_exhaustion_returns_429(client):
     respx.post(PRIMARY).respond(
         json=completion_body(prompt_tokens=30, completion_tokens=30)
