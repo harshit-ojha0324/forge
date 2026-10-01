@@ -86,6 +86,12 @@ class AdmissionController:
                 raise QueueWaitTimeout(
                     f"no capacity within {self._wait_timeout_s}s"
                 ) from None
+            except asyncio.CancelledError:
+                # Cancelled in the same tick a slot was handed to us: we own
+                # it but will never release it, so pass it on or it leaks.
+                if future.done() and not future.cancelled():
+                    self.release()
+                raise
         finally:
             metrics.QUEUE_WAITING.labels(tenant).dec()
         # Granted: the releasing request's slot transferred to us —

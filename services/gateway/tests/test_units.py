@@ -69,6 +69,21 @@ async def test_admission_times_out_waiting():
     ac.release()
 
 
+async def test_cancel_racing_a_grant_does_not_leak_the_slot():
+    ac = AdmissionController(max_concurrency=1, max_waiting=2, wait_timeout_s=5.0)
+    await ac.acquire("a")
+    waiter = asyncio.create_task(ac.acquire("b"))
+    await asyncio.sleep(0)  # b is queued
+    ac.release()  # a's slot is handed to b...
+    waiter.cancel()  # ...in the same tick b's client goes away
+    try:
+        await waiter
+        ac.release()  # Python < 3.11: wait_for lets the grant win over the cancel
+    except asyncio.CancelledError:
+        pass
+    assert ac.in_flight == 0
+
+
 def test_cache_key_ignores_irrelevant_fields():
     a = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "temperature": 0}
     b = dict(a, user="someone-else", metadata={"x": 1})
