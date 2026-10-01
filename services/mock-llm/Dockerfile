@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
 WORKDIR /srv
-RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.30"
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 
