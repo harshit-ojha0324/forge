@@ -225,17 +225,20 @@ queue-saturation warn), and OpenTelemetry traces into Jaeger.
 ## Multi-tenant fairness, measured
 
 A 40-worker tenant floods the gateway (8 slots) while a 2-worker tenant
-works alongside, same run, same 60 seconds:
+works alongside, same run, same 60 seconds. Re-measured in Oct 2026 on
+the current code; it matches the original July run to within 2%:
 
 | | flooder (40 workers) | light tenant (2 workers) |
 |---|---|---|
-| requests served | 686 | 150 |
-| p50 latency | **3,411 ms** (self-inflicted) | **778 ms** (≈ solo baseline) |
-| p95 latency | 3,470 ms | 1,148 ms |
-| errors | 0 | 0 |
+| requests served | 681 | 148 |
+| shed with 429 + `Retry-After` | 435 | 0 |
+| p50 latency | **3,422 ms** (self-inflicted) | **780 ms** (≈ solo baseline) |
+| p95 latency | 3,516 ms | 1,132 ms |
+| 5xx errors | 0 | 0 |
 
-The flooder's queue pins at its own cap (red panel) and sheds; the light
-tenant's queue stays near-empty; error rate holds 0.00% for both:
+The flooder's queue pins at its 32-request cap (red tile, yellow line in
+*Admission Queue*) and sheds; the light tenant's queue (green) stays near
+zero; the error rate holds 0.00% for both:
 
 ![Fairness under flood](docs/assets/fairness-demo.png)
 
