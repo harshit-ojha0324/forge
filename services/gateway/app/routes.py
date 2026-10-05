@@ -75,17 +75,38 @@ def _sync_breaker_gauge(state) -> None:
     metrics.BREAKER_STATE.set(int(state.breaker.state))
 
 
-async def _candidates(state) -> list[Backend]:
-    order = []
+async def _call_with_failover(state, call):
+    """Run `call(backend)` on the primary (if the breaker allows), else or
+    on failure the fallback; return (backend, result) from the first that
+    succeeds, keeping the breaker and its gauge in step."""
+    order = [state.fallback]
     if await state.breaker.allow_primary():
-        order.append(state.primary)
-    order.append(state.fallback)
-    return order
-
-
-async def _record_primary_failure(state) -> None:
-    await state.breaker.record_failure()
-    metrics.FAILOVERS.labels(state.primary.name, state.fallback.name).inc()
+        order.insert(0, state.primary)
+    last_err: BackendError | None = None
+    for backend in order:
+        try:
+            result = await call(backend)
+        except BackendError as err:
+            if backend is state.primary:
+                await state.breaker.record_failure()
+                metrics.FAILOVERS.labels(state.primary.name, state.fallback.name).inc()
+            last_err = err
+            continue
+        except UpstreamClientError:
+            # Upstream is alive; the 4xx is the caller's fault. Must be
+            # recorded as breaker success — a half-open probe that ends
+            # here would otherwise leave the breaker wedged in HALF_OPEN
+            # (probe never resolved) and permanently disable the primary.
+            if backend is state.primary:
+                await state.breaker.record_success()
+            _sync_breaker_gauge(state)
+            raise
+        if backend is state.primary:
+            await state.breaker.record_success()
+        _sync_breaker_gauge(state)
+        return backend, result
+    _sync_breaker_gauge(state)
+    raise AllBackendsFailed(str(last_err) if last_err else "no backend available")
 
 
 @router.get("/healthz")
@@ -187,80 +208,38 @@ async def chat_completions(request: Request):
 
 
 async def _handle_unary(state, tenant, payload, span, started) -> JSONResponse:
-    last_err: BackendError | None = None
-    for backend in await _candidates(state):
-        try:
-            response = await backend.chat(payload)
-        except BackendError as err:
-            if backend is state.primary:
-                await _record_primary_failure(state)
-            last_err = err
-            continue
-        except UpstreamClientError:
-            if backend is state.primary:
-                await state.breaker.record_success()  # upstream alive; 4xx is ours
-            _sync_breaker_gauge(state)
-            raise
-        if backend is state.primary:
-            await state.breaker.record_success()
-        _sync_breaker_gauge(state)
+    backend, response = await _call_with_failover(state, lambda b: b.chat(payload))
 
-        prompt_toks, completion_toks = extract_usage(response)
-        if prompt_toks + completion_toks == 0:
-            prompt_toks = estimate_tokens(json.dumps(payload.get("messages", [])))
-            completion_toks = estimate_tokens(
-                "".join(
-                    (c.get("message") or {}).get("content") or ""
-                    for c in response.get("choices", [])
-                )
+    prompt_toks, completion_toks = extract_usage(response)
+    if prompt_toks + completion_toks == 0:
+        prompt_toks = estimate_tokens(json.dumps(payload.get("messages", [])))
+        completion_toks = estimate_tokens(
+            "".join(
+                (c.get("message") or {}).get("content") or ""
+                for c in response.get("choices", [])
             )
-        await state.quotas.consume(tenant, prompt_toks + completion_toks)
-        metrics.TOKENS.labels(tenant.name, "prompt").inc(prompt_toks)
-        metrics.TOKENS.labels(tenant.name, "completion").inc(completion_toks)
-        metrics.LATENCY.labels(backend.name).observe(time.monotonic() - started)
-        metrics.REQUESTS.labels(tenant.name, backend.name, "ok").inc()
-        if await state.cache.put(tenant.name, payload, response):
-            metrics.CACHE_EVENTS.labels(result="store").inc()
-        span.set_attribute("forge.backend", backend.name)
-        span.set_attribute("forge.tokens.completion", completion_toks)
-        return JSONResponse(
-            response,
-            headers={"x-forge-backend": backend.name, "x-forge-cache": "miss"},
         )
-    _sync_breaker_gauge(state)
-    raise AllBackendsFailed(str(last_err) if last_err else "no backend available")
+    await state.quotas.consume(tenant, prompt_toks + completion_toks)
+    metrics.TOKENS.labels(tenant.name, "prompt").inc(prompt_toks)
+    metrics.TOKENS.labels(tenant.name, "completion").inc(completion_toks)
+    metrics.LATENCY.labels(backend.name).observe(time.monotonic() - started)
+    metrics.REQUESTS.labels(tenant.name, backend.name, "ok").inc()
+    if await state.cache.put(tenant.name, payload, response):
+        metrics.CACHE_EVENTS.labels(result="store").inc()
+    span.set_attribute("forge.backend", backend.name)
+    span.set_attribute("forge.tokens.completion", completion_toks)
+    return JSONResponse(
+        response,
+        headers={"x-forge-backend": backend.name, "x-forge-cache": "miss"},
+    )
 
 
 async def _handle_stream(state, tenant, payload, span, started) -> StreamingResponse:
     await state.admission.acquire(tenant.name, tenant.weight)
-    handle: StreamHandle | None = None
-    backend_used: Backend | None = None
     try:
-        last_err: BackendError | None = None
-        for backend in await _candidates(state):
-            try:
-                handle = await backend.start_stream(payload)
-                backend_used = backend
-                break
-            except BackendError as err:
-                if backend is state.primary:
-                    await _record_primary_failure(state)
-                last_err = err
-            except UpstreamClientError:
-                # Upstream is alive; the 4xx is the caller's fault. Must be
-                # recorded as breaker success — a half-open probe that ends
-                # here would otherwise leave the breaker wedged in HALF_OPEN
-                # (probe never resolved) and permanently disable the primary.
-                if backend is state.primary:
-                    await state.breaker.record_success()
-                _sync_breaker_gauge(state)
-                raise
-        if handle is None:
-            _sync_breaker_gauge(state)
-            raise AllBackendsFailed(str(last_err) if last_err else "no backend available")
-        if backend_used is state.primary:
-            await state.breaker.record_success()
-        _sync_breaker_gauge(state)
+        backend_used, handle = await _call_with_failover(
+            state, lambda b: b.start_stream(payload)
+        )
     except BaseException:
         state.admission.release()
         raise
