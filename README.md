@@ -285,7 +285,7 @@ material in [`curriculum/`](curriculum/):
 | [`deploy/karpenter/`](deploy/karpenter/) | GPU NodePool + EC2NodeClass (what Karpenter may launch) |
 | [`deploy/local/`](deploy/local/) | docker-compose stack mirroring the cluster |
 | [`evals/`](evals/) | The 20-prompt eval set + the deploy-gate script |
-| [`loadtest/`](loadtest/) | Python load generator + k6 profile |
+| [`loadtest/`](loadtest/) | Python load generator (drives `make demo` / `make loadgen`) |
 | [`docs/`](docs/) | [Architecture](docs/architecture.md) · [GPU-loss runbook](docs/runbook-gpu-node-loss.md) · [Cost breakdown](docs/cost.md) · [AWS setup](docs/aws-setup.md) · [GCP setup (archived)](docs/gcp-setup.md) |
 | [`curriculum/`](curriculum/) | Rebuild-and-defend learning program with teach-back question banks |
 
