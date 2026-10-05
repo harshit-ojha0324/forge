@@ -19,7 +19,6 @@ from . import metrics
 from .backends import (
     Backend,
     BackendError,
-    StreamHandle,
     UpstreamClientError,
     estimate_tokens,
     extract_usage,
@@ -253,7 +252,7 @@ async def _handle_stream(state, tenant, payload, span, started) -> StreamingResp
 
 
 async def _forward_stream(
-    state, tenant, payload, handle: StreamHandle, backend: Backend, started
+    state, tenant, payload, handle, backend: Backend, started
 ):
     """Forward SSE lines, watching them for the usage chunk so streamed
     requests are metered. Cleanup happens in `finally` without awaiting
@@ -265,7 +264,7 @@ async def _forward_stream(
     completion_chars = 0
     outcome = "ok"
     try:
-        async for line in handle.lines():
+        async for line in handle.aiter_lines():
             if not first_token_seen and line.startswith("data:"):
                 metrics.TTFT.labels(backend.name).observe(time.monotonic() - started)
                 first_token_seen = True
@@ -303,8 +302,8 @@ async def _forward_stream(
         _spawn(_finalize_stream(state, tenant, handle, prompt_toks + completion_toks))
 
 
-async def _finalize_stream(state, tenant, handle: StreamHandle, total_tokens: int):
+async def _finalize_stream(state, tenant, handle, total_tokens: int):
     try:
-        await handle.close()
+        await handle.aclose()
     finally:
         await state.quotas.consume(tenant, total_tokens)

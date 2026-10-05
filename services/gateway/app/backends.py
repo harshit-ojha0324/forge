@@ -6,8 +6,6 @@ so one client class covers both. The gateway owns model naming: clients
 send the public alias, and each backend rewrites it to the model it
 actually serves.
 """
-from typing import AsyncIterator
-
 import httpx
 
 
@@ -18,26 +16,6 @@ class BackendError(Exception):
         super().__init__(f"[{backend}] {detail}")
         self.backend = backend
         self.detail = detail
-
-
-class StreamHandle:
-    """An open, status-validated streaming response.
-
-    Created only after the upstream accepted the request (2xx), so a
-    failover decision can still be made cheaply before any byte reaches
-    the client. Iterate `lines()` to forward SSE data.
-    """
-
-    def __init__(self, backend: str, response: httpx.Response):
-        self.backend = backend
-        self._response = response
-
-    async def lines(self) -> AsyncIterator[str]:
-        async for line in self._response.aiter_lines():
-            yield line
-
-    async def close(self) -> None:
-        await self._response.aclose()
 
 
 def _is_backend_fault(status: int) -> bool:
@@ -97,7 +75,9 @@ class Backend:
             raise BackendError(self.name, "upstream 2xx with a non-JSON-object body")
         return body
 
-    async def start_stream(self, payload: dict) -> StreamHandle:
+    async def start_stream(self, payload: dict) -> httpx.Response:
+        """Open a streaming response, returned only once upstream accepted
+        it (2xx): failover is still cheap until a byte reaches the client."""
         request = self._client.build_request(
             "POST",
             f"{self.base_url}/chat/completions",
@@ -116,7 +96,7 @@ class Backend:
             body = await response.aread()
             await response.aclose()
             raise UpstreamClientError(response.status_code, body.decode(errors="replace"))
-        return StreamHandle(self.name, response)
+        return response
 
 
 class UpstreamClientError(Exception):
