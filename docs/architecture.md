@@ -51,7 +51,9 @@ Failure taxonomy:
 |---|---|---|
 | 2xx | success recorded, counter resets | response |
 | 5xx / connect error / timeout | failure; failover in-request | response from fallback |
-| 4xx (bad request, ctx too long) | success (upstream is alive) | the 4xx, unchanged |
+| 2xx with a non-JSON body | failure; failover in-request | response from fallback |
+| 401 / 403 (the gateway's own upstream credentials rejected) | failure; failover in-request | response from fallback |
+| other 4xx (bad request, ctx too long) | success (upstream is alive) | the 4xx, unchanged |
 | both backends fail | — | 502 `all_backends_failed` |
 
 Streaming: failover is possible until the upstream accepts the request.
@@ -104,8 +106,11 @@ loop is the insertion point.
 
 ## 6. Caching
 
-Exact-match Redis cache, only for `temperature=0, stream=false` requests
-(hash of model + messages + sampling params). Sampled requests are never
+Exact-match Redis cache, only for `temperature=0, stream=false` requests,
+keyed per tenant on a hash of the whole request minus fields that can't
+change the output (`stream`, `stream_options`, `user`, `metadata`), so an
+unknown parameter costs a miss, never a wrong answer, and a hit never
+reveals what another tenant asked. Sampled requests are never
 cached — replaying one output for a distribution of valid outputs would
 silently change behaviour. The interface is key/value so a semantic cache
 (embed → ANN lookup) can replace `cache_key` without touching the flow.
@@ -127,9 +132,12 @@ swapping models requires no client change.
 - **Traces** (OpenTelemetry → Jaeger): one span per request with tenant,
   backend, cache, and token attributes; agent traffic propagates context
   so a trace runs agent → gateway → backend.
-- **Alerts** (SLOs): client-visible error rate > 1% (page), p95 > 5s
-  (page), breaker open > 1m (warn), queue > 75% (warn). Alert text links
-  the runbook.
+- **Alerts** (SLOs): client-visible error rate > 1% (page; counts
+  exhausted failover, queue-wait timeouts, broken streams and unexpected
+  500s), p95 > 5s (page), breaker open > 1m (warn), a tenant's queue
+  > 75% of its cap (warn). Alert text links the runbook. The rules and the
+  dashboard live once in the gateway chart (a `PrometheusRule` and a
+  sidecar ConfigMap); docker-compose mounts the same files.
 
 ## 9. Kubernetes & GitOps topology
 
@@ -143,6 +151,9 @@ swapping models requires no client change.
   app; every service, chart bump, and config change after that ships by
   git push. `prune: true, selfHeal: true` means the cluster converges to
   git, including reverting drift.
+- **Network**: NetworkPolicies admit only gateway pods to vLLM and Redis,
+  so nothing in the cluster can skip auth, quotas or fair queueing (on
+  EKS this needs the VPC CNI's `enableNetworkPolicy`, set in Terraform).
 - **CI gate**: unit tests → boot the full stack in CI → 26-check eval run
   including a failover drill → only then are images pushed for ArgoCD to
   roll out.
@@ -155,7 +166,7 @@ swapping models requires no client change.
 | Spot GPU node preempted | same as above, plus pod reschedules; pool may re-provision a node (minutes). Runbook: `docs/runbook-gpu-node-loss.md`. |
 | Redis down | **fail open**: quota checks pass (unmetered), cache silently bypassed, `forge_redis_errors_total` counts every absorbed failure. Serving is unaffected; `/v1/usage` degrades. Fail-closed would only be right if quotas were hard billing guarantees. |
 | Gemini down while vLLM healthy | invisible (fallback unused). If vLLM *also* fails: 502s, `ForgeErrorRateSLOBreach` pages. |
-| Traffic spike 3x | queue absorbs the burst, then 429s with Retry-After; `ForgeQueueSaturated` warns; dashboards show shed rate for the scaling decision. |
+| Traffic spike 3x | queue absorbs the burst, then 429s with Retry-After; `ForgeTenantQueueSaturated` warns; dashboards show shed rate for the scaling decision. |
 | Bad deploy of the gateway | eval gate blocks the image publish; if something ships anyway, ArgoCD rollback = git revert. |
 
 ## 11. Known limitations (v1)
