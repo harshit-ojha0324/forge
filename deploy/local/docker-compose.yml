@@ -32,18 +32,9 @@ services:
       - mock-gemini
       - jaeger
     environment:
-      FORGE_REDIS_URL: redis://redis:6379/0
-      FORGE_PRIMARY_BASE_URL: http://mock-vllm:8000/v1
-      FORGE_PRIMARY_MODEL: qwen2.5-3b-instruct
-      FORGE_FALLBACK_BASE_URL: http://mock-gemini:8000/v1
-      FORGE_FALLBACK_MODEL: gemini-2.0-flash
-      FORGE_MAX_CONCURRENCY: "8"
-      FORGE_QUEUE_MAX_WAITING: "32"
-      FORGE_QUEUE_WAIT_TIMEOUT_S: "10"
-      FORGE_BREAKER_FAILURE_THRESHOLD: "3"
+      # Only what differs from app/config.py, whose defaults target this stack.
       FORGE_BREAKER_COOLDOWN_S: "10"
       FORGE_CONNECT_TIMEOUT_S: "1"
-      FORGE_TENANTS_FILE: /etc/forge/tenants.yaml
       FORGE_OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     volumes:
       - ./tenants.yaml:/etc/forge/tenants.yaml:ro
