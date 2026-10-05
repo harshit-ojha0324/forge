@@ -26,8 +26,6 @@ from contextlib import asynccontextmanager
 from . import metrics
 from .errors import QueueFull, QueueWaitTimeout
 
-DEFAULT_TENANT = "anonymous"
-
 
 class _TenantQueue:
     __slots__ = ("waiters", "weight", "current")
@@ -56,7 +54,7 @@ class AdmissionController:
     def _has_waiters(self) -> bool:
         return any(q.pending() for q in self._queues.values())
 
-    async def acquire(self, tenant: str = DEFAULT_TENANT, weight: int = 1) -> None:
+    async def acquire(self, tenant: str, weight: int = 1) -> None:
         # Fast path — capacity free and nobody queued ahead. Must not
         # yield to the event loop, or burst traffic reads phantom queues.
         if self.in_flight < self._max_concurrency and not self._has_waiters():
@@ -133,7 +131,7 @@ class AdmissionController:
             # All this tenant's waiters were dead — pick again.
 
     @asynccontextmanager
-    async def slot(self, tenant: str = DEFAULT_TENANT, weight: int = 1):
+    async def slot(self, tenant: str, weight: int = 1):
         """Context-managed slot for unary requests. Streaming requests use
         acquire()/release() directly because the slot must outlive the
         route handler (it is released when the stream finishes)."""

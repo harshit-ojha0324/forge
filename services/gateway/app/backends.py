@@ -14,8 +14,6 @@ class BackendError(Exception):
 
     def __init__(self, backend: str, detail: str):
         super().__init__(f"[{backend}] {detail}")
-        self.backend = backend
-        self.detail = detail
 
 
 def _is_backend_fault(status: int) -> bool:
