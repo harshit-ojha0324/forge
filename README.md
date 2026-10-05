@@ -27,7 +27,8 @@ stays pinned at 0.00%. When the primary comes back, a single half-open
 probe closes the breaker and traffic returns home (blue).*
 
 Numbers from that run (local stack, mock model backends, the same
-gateway code that runs on GKE; a real-GPU preemption drill is stage 6):
+gateway code that runs on GKE; the real-GPU drills are
+[further down](#the-drill-repeated-for-real-up-to-a-genuine-spot-preemption)):
 
 | Metric | Value |
 |---|---|
@@ -99,11 +100,16 @@ GPU batch capacity is the scarce resource worth protecting.
   queue; freed slots are granted by smooth weighted round-robin, so a
   flooding tenant 429s itself while everyone else keeps their latency.
   Fairness is slot-based (honest limit: not token-cost-based, yet).
-- **4xx never fails over.** A bad request is the caller's fault; only 5xx
-  and transport errors count against the breaker, client bugs shouldn't
-  look like outages.
-- **Only `temperature=0` is cached.** Replaying one sample from a
-  sampling distribution silently changes model behaviour.
+- **Caller errors never fail over.** A bad request (400, context too
+  long) is the caller's fault and passes straight through. 5xx, transport
+  errors, garbage 2xx bodies, and an upstream 401/403 (the *gateway's*
+  credentials rejected) count against the breaker and fail over: client
+  bugs shouldn't look like outages, and the gateway's misconfiguration
+  shouldn't look like the client's bad key.
+- **Only `temperature=0` is cached, per tenant.** Replaying one sample
+  from a sampling distribution silently changes model behaviour. The key
+  hashes the whole request (`tools`, `response_format`, `seed`, ...) and
+  is scoped per tenant, so a hit can't reveal what another tenant asked.
 - **Quota checks at admission, charges after the response.** Pre-reserving
   tokens for an unknown-length response rejects legitimate work; the
   bounded overshoot is documented instead.
@@ -118,7 +124,7 @@ GPU batch capacity is the scarce resource worth protecting.
 ## Running in production on GKE
 
 The platform runs live on a GKE cluster provisioned entirely by
-[Terraform](infra/terraform/): custom VPC, Cloud NAT, **nodes with no
+[Terraform](infra/gcp/): custom VPC, Cloud NAT, **nodes with no
 public IPs**, workload identity (no key files anywhere), a spot CPU pool
 for services and a spot T4 pool that autoscales 0→1 only when the vLLM
 pod schedules.
@@ -213,10 +219,13 @@ blocks the artifact from ever existing.
 
 ## Observability
 
-Grafana dashboard (auto-provisioned locally; shipped to the cluster's
-kube-prometheus-stack via a sidecar-labeled ConfigMap), Prometheus SLO
-alert rules (client-visible error rate >1% pages; breaker-open and
-queue-saturation warn), and OpenTelemetry traces into Jaeger.
+The Grafana dashboard and the Prometheus SLO alert rules live once, in
+the [gateway chart](deploy/helm/forge-gateway/): the cluster gets them as
+a sidecar-labeled ConfigMap and a `PrometheusRule`, and the local stack
+mounts the same files. The error-rate SLO (pages at >1%) counts every
+client-visible failure: exhausted failover, admission-queue timeouts,
+broken streams, unexpected 500s. Breaker-open and per-tenant queue
+saturation warn. OpenTelemetry traces go to Jaeger.
 
 | Breaker OPEN, fallback serving, 0.00% errors | Recovered, the full arc in one chart |
 |---|---|
@@ -274,11 +283,46 @@ material in [`curriculum/`](curriculum/):
 - **Secrets hygiene**: tenant keys rotated to an out-of-band Secret
   (git carries only the reference); a committed `tfplan` purged.
 
+**Second audit (Oct 2026).** A full correctness and security pass. Each
+finding was confirmed before it was fixed (the gateway bugs by
+reproducing them in a test), and the gateway fixes ship with regression
+tests:
+
+- **A garbage 2xx wedged the breaker**: a 200 whose body wasn't JSON (a
+  proxy error page) escaped as an unhandled 500 with no failover; as a
+  half-open probe it never resolved, so the primary stayed off until a
+  restart. Now it's a backend failure that fails over.
+- **Cross-tenant cache hits**: the key was global and hashed only seven
+  fields, so tenant B got (and could detect, via `x-forge-cache: hit`)
+  tenant A's answer, and requests differing only in `tools` or
+  `response_format` shared an entry. Now per tenant, over the whole
+  request.
+- **Leaked concurrency slots**: a queued request cancelled in the same
+  tick it was granted a slot kept it forever, shrinking capacity by one
+  each time. Only on Python 3.11+, and the image runs 3.12.
+- **Alerts that never reached the cluster**: the SLO rules were only
+  mounted into docker-compose, and the error-rate rule counted on an
+  outcome the gateway never emitted. Now a `PrometheusRule` that also counts
+  queue timeouts and unexpected 500s.
+- **A bypassable gateway**: any pod could call vLLM or Redis directly,
+  skipping auth, quotas and fair queueing. NetworkPolicies now admit only
+  the gateway, with the VPC CNI's enforcement switched on (EKS silently
+  ignores NetworkPolicies otherwise).
+- **Smaller ones**: upstream 401/403 fail over instead of telling clients
+  their key is invalid; streamed prompts are metered when the upstream
+  omits usage; fire-and-forget tasks keep strong references; every image
+  runs non-root on a fully locked dependency set; CI actions are pinned
+  to commit SHAs.
+
+The same pass cut ~300 lines: one failover loop shared by the unary and
+streaming paths, a single source for the dashboard and alert rules, and
+dead config and wrappers.
+
 ## Repo map
 
 | Path | What it is |
 |---|---|
-| [`services/gateway/`](services/gateway/) | The inference gateway (FastAPI), breaker, fair queueing, quotas, cache, failover. 32 unit tests. |
+| [`services/gateway/`](services/gateway/) | The inference gateway (FastAPI), breaker, fair queueing, quotas, cache, failover. 39 unit tests. |
 | [`services/mock-llm/`](services/mock-llm/) | OpenAI-compatible mock model server with failure injection (`POST /control`) |
 | [`services/agent-demo/`](services/agent-demo/) | LangGraph smart-city agent running as tenant #1 |
 | [`infra/aws/`](infra/aws/) | EKS, VPC/NAT, Karpenter (spot GPU + interruption queue), ECR, GitHub OIDC CI role, FIS spot drill |
