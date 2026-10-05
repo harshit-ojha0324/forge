@@ -280,11 +280,10 @@ material in [`curriculum/`](curriculum/):
 | [`services/agent-demo/`](services/agent-demo/) | LangGraph smart-city agent running as tenant #1 |
 | [`infra/aws/`](infra/aws/) | EKS, VPC/NAT, Karpenter (spot GPU + interruption queue), ECR, GitHub OIDC CI role, FIS spot drill |
 | [`infra/gcp/`](infra/gcp/) | Archived GKE build the drills ran on: VPC/NAT, workload identity, spot node pools, Artifact Registry |
-| [`deploy/helm/`](deploy/helm/) | Charts: gateway (+ Grafana dashboard ConfigMap, PrometheusRule SLO alerts), vllm, redis, mock-llm |
+| [`deploy/helm/`](deploy/helm/) | Charts: gateway (+ the Grafana dashboard and SLO alert rules, shared with the local stack), vllm, redis, mock-llm |
 | [`deploy/argocd/`](deploy/argocd/) | App-of-apps, the cluster's table of contents in git |
 | [`deploy/karpenter/`](deploy/karpenter/) | GPU NodePool + EC2NodeClass (what Karpenter may launch) |
 | [`deploy/local/`](deploy/local/) | docker-compose stack mirroring the cluster |
-| [`observability/`](observability/) | Dashboard JSON for the local Grafana |
 | [`evals/`](evals/) | The 20-prompt eval set + the deploy-gate script |
 | [`loadtest/`](loadtest/) | Python load generator + k6 profile |
 | [`docs/`](docs/) | [Architecture](docs/architecture.md) · [GPU-loss runbook](docs/runbook-gpu-node-loss.md) · [Cost breakdown](docs/cost.md) · [AWS setup](docs/aws-setup.md) · [GCP setup (archived)](docs/gcp-setup.md) |
